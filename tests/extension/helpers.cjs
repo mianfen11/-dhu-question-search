@@ -14,3 +14,14 @@ const row=(updates={}) => ({question_id:1,question_type:'one_choice',question:'æ
 const page='https://aidhu.net/web/#/main/handbookAnswer?manual_id=1&chapter_id=1&mode=practice';
 const url='https://api.aidhu.net/api/protected/app/manual/chapter/questions/one_choice?manual_id=1&chapter_id=1';
 module.exports={run,context,plain,row,page,url,root};
+
+// Decode committed storage, not a worker cache, to assert durability in tests.
+function persisted(data){
+  const h=data.dhuBankHeadV2;if(!h)return data.questionBankV1;
+  const blob=id=>{const v=data['dhuBlobV2:'+id];return JSON.parse(typeof v==='string'?v:v.parts.map(p=>data['dhuBlobV2:part:'+p]).join(''));};
+  const list=pages=>pages.flatMap(p=>blob(p).map(blob));
+  const result={};for(const [k,v]of Object.entries(h.parts))if(!['queue','catalogs'].includes(k))result[k]=blob(v);
+  result.questions=list(h.questions);if(h.parts.queue)result.queue={...blob(h.parts.queue),catalogs:blob(h.parts.catalogs),tasks:list(h.tasks)};
+  return result;
+}
+module.exports.persisted=persisted;

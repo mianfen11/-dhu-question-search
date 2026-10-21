@@ -1,8 +1,9 @@
 'use strict';
-importScripts('entities.js','core.js','store.js','queue.js','auto-runner.js');
+importScripts('entities.js','core.js','store.js','persistence.js','queue.js','auto-runner.js');
 const C=globalThis.DhuBankCore, S=globalThis.DhuBankStore, Q=globalThis.DhuQueue;
 // Only extension contexts may directly access storage, never content scripts.
 const storageReady=Promise.resolve().then(()=>chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'})).then(()=>true,()=>false);
+const persistence=DhuPersistence.create(chrome.storage.local,{runtime:chrome.runtime});
 let tail=Promise.resolve();
 const popupURL=chrome.runtime.getURL('popup.html');
 function serial(fn){const task=tail.then(fn);tail=task.catch(()=>{});return task;}
@@ -13,8 +14,9 @@ function armAlarm(when){
 }
 const automatic=DhuAutoRunner.create({
   now:()=>Date.now(),serial,watchdog:()=>armAlarm(Date.now()+30000),
-  load:async()=>{if(!await storageReady)throw new Error('storage_error');return S.load(chrome.storage.local);},
-  save:state=>chrome.storage.local.set({[S.KEY]:state}),
+  load:async()=>{if(!await storageReady)throw DhuPersistence.error('write_denied','access');return persistence.load();},
+  save:state=>persistence.save(state),inherit:persistence.inherit,
+  readReceipt:(a,r)=>persistence.receipt(a,r),saveReceipt:(a,r,result)=>persistence.receipt(a,r,result),fault:e=>serial(()=>persistence.fault(e)),
   schedule:when=>{
     clearTimeout(autoTimer);
     autoTimer=setTimeout(()=>void automatic.tick(),Math.max(0,when-Date.now()));
@@ -31,6 +33,7 @@ const automatic=DhuAutoRunner.create({
     return {result:results[0].result,documentId:results[0].documentId};
   }
 });
+async function storedStats(state){return {...automatic.stats(state),storage:await persistence.diagnostics()};}
 chrome.alarms?.onAlarm.addListener(alarm=>{if(alarm.name==='dhu-auto')void automatic.tick();});
 chrome.runtime.onStartup?.addListener(()=>void automatic.tick());
 chrome.runtime.onInstalled?.addListener(()=>void automatic.tick());
@@ -85,30 +88,30 @@ async function handle(message,sender) {
   } else if (!isPopup) throw new Error('仅弹窗可操作本地题库');
   if(!await storageReady)return {ok:false,stage:'storage_error',reason:'storage_access',error:'无法初始化扩展本地存储权限'};
   let state;
-  try { state=await S.load(chrome.storage.local); }
-  catch { return {ok:false,stage:'storage_error',reason:'storage_read',error:'读取本地题库失败，原数据未改动'}; }
-  if (message.kind==='stats') return {ok:true,stats:automatic.stats(state)};
+  try { state=await persistence.load(); }
+  catch(e) {await persistence.fault(e);return {ok:false,stage:'storage_error',reason:'storage_read',error:DhuPersistence.labels[DhuPersistence.classify(e,'read').code]+'；原数据未改动'};}
+  if (message.kind==='stats') return {ok:true,stats:await storedStats(state)};
   if(message.kind==='auto_start'||message.kind==='auto_control') {
     const next=await automatic.command(state,message);
     if(next.automation.status!=='running')void automatic.cancel(next.automation);
-    try{await chrome.storage.local.set({[S.KEY]:next});}
-    catch{return {ok:false,error:'自动计划写入失败，请检查本地存储；暂停/停止已阻止本次后台继续派发'};}
+    try{await persistence.save(next);if(['resume','recover','stop'].includes(message.action))await persistence.acknowledge();}
+    catch(e){await persistence.fault(e);return {ok:false,error:DhuPersistence.labels[DhuPersistence.classify(e).code]+'；原任务和回执保留，已阻止继续派发'};}
     setTimeout(()=>void automatic.tick(),0);
-    return {ok:true,stats:automatic.stats(next)};
+    return {ok:true,stats:await storedStats(next)};
   }
   if(message.kind==='queue_control'&&state.automation&&['running','paused'].includes(state.automation.status))throw new Error('请使用自动计划控制按钮');
   if(message.kind==='queue_control' || platformEvent) {
     const queue=platformEvent?(platformEvent.event==='chapters'?Q.catalog(Q.read(state),platformEvent):platformEvent.event==='empty'?(state.automation?Q.read(state):Q.observe(Q.read(state),platformEvent.meta,platformEvent.capture,{added:0,duplicates:0,rejected:0})):Q.blocked(Q.read(state),platformEvent.status)):
       Q.control(Q.read(state),message.action,{manual_id:message.manual_id,rounds:message.rounds});
-    const next={...state,queue};
+    const next=persistence.inherit(state,{...state,queue});
     if(message.kind==='queue_control'&&message.action==='start'&&!next.automation?.inflight)delete next.automation;
     if(platformEvent?.event==='blocked'&&next.automation?.status==='running'){
       next.automation={...next.automation,status:'paused',last_error:'http_'+platformEvent.status};
       void automatic.cancel(next.automation);
     }
-    try {await chrome.storage.local.set({[S.KEY]:next});}
-    catch {return {ok:false,error:'离线队列保存失败，原数据未覆盖'};}
-    return {ok:true,stats:automatic.stats(next)};
+    try {await persistence.save(next);}
+    catch(e) {await persistence.fault(e);return {ok:false,error:DhuPersistence.labels[DhuPersistence.classify(e).code]+'；离线队列未确认，原数据保留'};}
+    return {ok:true,stats:await storedStats(next)};
   }
   if (message.kind==='export') return {ok:true,bank:S.exportBank(state)};
   if (message.kind==='import') {
@@ -117,10 +120,10 @@ async function handle(message,sender) {
   }
   if (!rows) throw new Error('未知操作');
   const merged=await S.merge(state,rows);
-  if(message.kind==='collect')merged.state.queue=state.automation?Q.read(state):Q.observe(Q.read(state),meta,safeCapture,merged.result);
-  try { await chrome.storage.local.set({[S.KEY]:merged.state}); }
-  catch { return {ok:false,stage:'storage_error',reason:'storage_write',error:'本地保存失败，可能超出 Chrome 存储配额；原题库未覆盖'}; }
-  return {ok:true,result:merged.result,stats:automatic.stats(merged.state)};
+  if(message.kind==='collect')merged.state.queue=state.automation?state.queue:Q.observe(Q.read(state),meta,safeCapture,merged.result);
+  try { await persistence.save(merged.state); }
+  catch(e) {await persistence.fault(e);return {ok:false,stage:'storage_error',reason:'storage_write',error:DhuPersistence.labels[DhuPersistence.classify(e).code]+'；保存未确认，原题库保留，请重试本次导入或练习'};}
+  return {ok:true,result:merged.result,stats:await storedStats(merged.state)};
 }
 chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   // Returning true keeps the channel/worker alive until the serialized operation completes.

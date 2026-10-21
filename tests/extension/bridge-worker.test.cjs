@@ -57,7 +57,7 @@ test('manifest limits storage and MAIN injection permissions to the required sit
   assert.equal(m.content_scripts[1].world,'MAIN');
   assert.equal(m.content_scripts[1].js[0],'main-bootstrap.js');
   assert.deepEqual(m.content_scripts[0].js,['entities.js','core.js','handshake.js','content.js']);
-  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage','scripting','alarms']);
+  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage','scripting','alarms','unlimitedStorage']);
   assert.deepEqual(m.host_permissions,['https://aidhu.net/','https://aidhu.net/web/*']);assert.equal(m.externally_connectable,undefined);
   assert.ok(m.content_scripts.every(s=>s.run_at==='document_start'&&s.matches.length===2&&s.matches[0]==='https://aidhu.net/'&&s.matches[1]==='https://aidhu.net/web/*'&&!s.all_frames));
   assert.match(m.content_security_policy.extension_pages,/connect-src 'none'/);
@@ -77,7 +77,7 @@ test('storage quota failure returns error and leaves existing bank intact',async
   const before=JSON.stringify(w.data);
   w.c.chrome.storage.local.set=async()=>{throw new Error('QUOTA_BYTES quota exceeded');};
   const result=await w.send({kind:'import',json:JSON.stringify([row({question:'新题'})])});
-  assert.equal(result.ok,false);assert.match(result.error,/存储配额/);
+  assert.equal(result.ok,false);assert.match(result.error,/存储容量不足/);
   assert.equal(JSON.stringify(w.data),before);
 });
 test('SPA collection must not be rejected by an absent or stale sender.tab.url snapshot',async () => {

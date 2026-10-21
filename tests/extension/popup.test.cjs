@@ -4,7 +4,7 @@ const {context,run}=require('./helpers.cjs');
 const tick=()=>new Promise(r=>setTimeout(r,10));
 function popup() {
   const elements={};
-  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail','queue-manual','queue-rounds','queue-start','queue-pause','queue-resume','queue-stop','queue-status','chapter-progress','auto-start','auto-interval'])
+  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail','queue-manual','queue-rounds','queue-start','queue-pause','queue-resume','queue-stop','queue-status','chapter-progress','auto-start','auto-interval','storage-diagnostic','recover-storage'])
     elements[id]={textContent:'',disabled:false,value:'',files:[],children:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},click(){this.listeners.click?.();}};
   elements['queue-rounds'].value='1';elements['auto-interval'].value='5';
   const controls=[];
@@ -83,4 +83,14 @@ test('popup starts automatic mode with selected limits and renders running round
   assert.match(p.elements['queue-status'].textContent,/429/);assert.equal(p.elements['auto-start'].disabled,true);
   p.elements['queue-pause'].click();await tick();assert.equal(p.controls[1].kind,'auto_control');assert.equal(p.controls[1].action,'pause');
   p.elements.export.click();await tick();assert.match(p.download.name,/\.json$/);
+});
+
+test('storage diagnostics show durable usage/fault/commit and recovery uses an explicit local-only control',async()=>{
+  const p=popup();await tick();
+  p.stats.automation={run_id:'plan-1',status:'paused',rounds:1,phase:'questions',inflight:{id:'request-1'},last_error:'quota_exceeded',round_results:[]};
+  p.stats.storage={usage_bytes:2097152,revision:8,last_error:{code:'quota_exceeded',stage:'write',blocking:true},last_success_at:1000,pending_recovery:true,last_commit:{result:'failed'}};
+  p.elements.refresh.click();await tick();
+  assert.match(p.elements['storage-diagnostic'].textContent,/2.00 MiB/);assert.match(p.elements['storage-diagnostic'].textContent,/存储容量不足/);assert.match(p.elements['storage-diagnostic'].textContent,/待恢复/);
+  assert.equal(p.elements['recover-storage'].disabled,false);assert.equal(p.elements['queue-resume'].disabled,true);
+  p.elements['recover-storage'].click();await tick();assert.equal(p.controls.at(-1).action,'recover');
 });

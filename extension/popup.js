@@ -10,6 +10,7 @@ function showStats(stats) {
   if(stats.queue)showQueue(stats.queue);
   automation=stats.automation||null;
   showAutomatic(stats);
+  showStorage(stats);
 }
 function showQueue(q) {
   const labels={idle:'未建立计划',tracking:'离线记录中（不自动访问）',paused:'已暂停离线记录',stopped:'已停止，历史任务进度保留',round_finished:'计划轮次已观察完，题库完整性未验证'};
@@ -39,7 +40,8 @@ function showAutomatic(stats){
   if(!a)return;
   if(active){$('queue-rounds').value=String(a.rounds);if(Number.isInteger(a.interval_ms))$('auto-interval').value=String(a.interval_ms/1000);}
   $('queue-start').disabled=Boolean(active||a.inflight);
-  $('queue-pause').disabled=a.status!=='running';$('queue-resume').disabled=a.status!=='paused'||Boolean(a.inflight);
+  $('queue-pause').disabled=a.status!=='running';$('queue-resume').disabled=!(a.status==='paused'||a.status==='stopped'&&a.inflight&&['receipt_missing','page_unavailable'].includes(a.last_error))||Boolean(a.inflight&&!['receipt_missing','page_unavailable'].includes(a.last_error));
+  $('queue-resume').textContent=a.inflight&&['receipt_missing','page_unavailable'].includes(a.last_error)?'确认重试未确认任务':'继续';
   $('queue-stop').disabled=!active;
   $('queue-manual').disabled=Boolean(active);$('queue-rounds').disabled=Boolean(active);
   const labels={running:'自动收集中',paused:'自动收集已暂停',stopped:'自动收集已停止',completed:'设定轮次已完成，题库完整性未验证'};
@@ -52,8 +54,20 @@ function showAutomatic(stats){
   const types={one_choice:'单选',multi_choice:'多选',judge:'判断'};
   $('queue-status').textContent=(labels[a.status]||'未知状态')+`。当前章节 ${task?.chapter_id||'—'}，题型 ${types[task?.question_type]||'—'}，第 ${round}/${a.rounds} 轮；任务 ${p.observed}/${p.total}；本轮新增 ${currentAdded}，重复 ${p.duplicates}。`+
     (a.phase==='chapters'?'正在获取章节清单。':'')+
-    '最近请求：'+(a.last_request_at?new Date(a.last_request_at).toLocaleString():'尚未请求')+'。最近错误：'+(errors[stats.automation_error||a.last_error]||'无')+'。'+
-    a.round_results.map(r=>`第 ${r.round} 轮新增 ${r.added}。`).join('');
+    '最近请求：'+(a.last_request_at?new Date(a.last_request_at).toLocaleString():'尚未请求')+'。最近错误：'+(storageLabels[stats.automation_error||a.last_error]||errors[stats.automation_error||a.last_error]||'无')+'。'+
+    `计划 ${a.run_id||'—'}。`+(a.previous_run_id?`上次计划 ${a.previous_run_id}。`:'')+a.round_results.map(r=>`第 ${r.round} 轮新增 ${r.added}。`).join('');
+}
+const storageLabels={quota_exceeded:'存储容量不足',serialization:'数据序列化失败',write_denied:'存储写入被拒绝',storage_timeout:'存储操作超时，结果待确认',state_conflict:'任务状态或存储版本冲突',integrity_error:'数据完整性校验失败',read_failed:'存储读取失败',unknown_storage:'未知存储异常',migration_failed:'旧数据迁移校验失败',task_processing:'任务数据处理失败'};
+function showStorage(stats){
+  const d=stats.storage;
+  $('recover-storage').disabled=!stats.automation?.inflight||stats.automation?.status==='running';
+  if(!d){$('storage-diagnostic').textContent='存储诊断暂不可用';return;}
+  const error=d.last_error;
+  $('storage-diagnostic').textContent=`题目 ${stats.total}；本地使用量 ${Number.isFinite(d.usage_bytes)?(d.usage_bytes/1024/1024).toFixed(2)+' MiB':'未知'}；提交版本 ${d.revision}。`+
+    '最近存储错误：'+(storageLabels[error?.code]||'无')+(error?.stage?'（阶段 '+error.stage+'）':'')+'。'+
+    '最近成功保存：'+(d.last_success_at?new Date(d.last_success_at).toLocaleString():'尚未提交')+'。'+
+    (d.pending_recovery?'存在待恢复任务/回执。':'无待恢复回执。')+
+    '最近数据提交：'+(d.last_commit?.result==='failed'?'失败，未确认':d.revision?'已持久化':'尚无提交')+'。'+(d.legacy_backup_retained?'旧版题库备份保留。':'无旧版题库备份（新安装）。');
 }
 async function send(message) {
   const response=await chrome.runtime.sendMessage(message);
@@ -120,7 +134,7 @@ $('file').addEventListener('change',() => action(async () => {
     (r.errors.length ? '\n'+r.errors.map(e => `第 ${e.index+1} 条：${e.error}`).join('\n') : '');
 }));
 chrome.storage.onChanged.addListener((changes,area) => {
-  if (area==='local' && changes.questionBankV1 && !busy) void action(refresh);
+  if (area==='local' && ['questionBankV1','dhuBankHeadV2','dhuStorageFaultV2','dhuPendingReceiptV2'].some(k=>changes[k]) && !busy) void action(refresh);
 });
 void action(refresh);
 
@@ -130,8 +144,8 @@ setInterval(()=>{if(!busy)void diagnoseActiveTab();},1000);
 for(const [id,command] of [['queue-start','start'],['queue-pause','pause'],['queue-resume','resume'],['queue-stop','stop']]) {
   $(id).addEventListener('click',()=>action(async()=>{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-    const response=await send(automation&&['running','paused'].includes(automation.status)?
-      {kind:'auto_control',action:command,tab_id:tab?.id}:
+    const response=await send(automation&&(['running','paused'].includes(automation.status)||automation.inflight)?
+      {kind:'auto_control',action:command,tab_id:tab?.id,...(command==='resume'&&automation.inflight&&['receipt_missing','page_unavailable'].includes(automation.last_error)?{retry_uncertain:true}:{})}:
       {kind:'queue_control',action:command,manual_id:$('queue-manual').value,rounds:Number($('queue-rounds').value)});
     showStats(response.stats);
   }));
@@ -143,3 +157,5 @@ $('auto-start').addEventListener('click',()=>action(async()=>{
     rounds:Number($('queue-rounds').value),interval_seconds:Number($('auto-interval').value)});
   showStats(response.stats);
 }));
+
+$('recover-storage').addEventListener('click',()=>action(async()=>{const response=await send({kind:'auto_control',action:'recover'});showStats(response.stats);}));

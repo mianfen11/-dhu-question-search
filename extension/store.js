@@ -19,17 +19,26 @@
       if(!result.some(c=>c.manual_id===v.manual_id&&c.chapter_id===v.chapter_id))result.push({manual_id:v.manual_id,chapter_id:v.chapter_id});
     }return result;
   }
+  const indices=new WeakMap(),summaries=new WeakMap();
   async function merge(state, rows) {
     if (!Array.isArray(rows) || rows.length > 50000) throw new Error('单次最多导入 50000 条题目');
-    // Migrate existing chapter-separated duplicates during the same atomic write.
-    const questions=[],byKey=new Map();
-    for(const original of state.questions){
-      const q={...original,question_ids:[...(original.question_ids||[])],explanations:[...(original.explanations||[])],contexts:contexts(original)};
-      const existing=byKey.get(key(q));
-      if(existing){existing.question_ids=[...new Set([...existing.question_ids,...q.question_ids])];existing.explanations=[...new Set([...existing.explanations,...q.explanations])];existing.contexts=contexts({...existing,contexts:[...existing.contexts,...q.contexts]});
-        for(const field of ['source','analysis'])if(!existing[field]&&q[field])existing[field]=q[field];
-      }else{questions.push(q);byKey.set(key(q),q);}
+    // Immutable/copy-on-write records let persistence reuse unchanged blobs.
+    let indexed=indices.get(state.questions);
+    if(!indexed){
+      const base=[],positions=new Map();
+      for(const original of state.questions){
+        const identity=key(original),at=positions.get(identity);
+        if(at!==undefined){
+          const prior=base[at];base[at]={...prior,
+            question_ids:[...new Set([...(prior.question_ids||[]),...(original.question_ids||[])])],
+            explanations:[...new Set([...(prior.explanations||[]),...(original.explanations||[]),...[prior.source,prior.analysis,original.source,original.analysis].filter(Boolean)])],
+            contexts:contexts({...prior,contexts:[...contexts(prior),...contexts(original)]}),
+            source:prior.source||original.source||'',analysis:prior.analysis||original.analysis||''};
+        }else{positions.set(identity,base.length);base.push(original);}
+      }
+      indexed={base,positions};indices.set(state.questions,indexed);
     }
+    const questions=indexed.base.slice(),byKey=new Map(indexed.positions);
     let added=0, duplicates=0, rejected=0;
     const errors=[];
     for (let index=0; index<rows.length; index++) {
@@ -42,17 +51,19 @@
         if (Array.isArray(row.explanations)) for (const s of row.explanations.slice(0,100)) explanations.push(C.text(s));
         const ids = new Set(q.question_id ? [q.question_id] : []);
         if (Array.isArray(row.question_ids)) for (const value of row.question_ids.slice(0,100)) if (value != null && C.text(value)) ids.add(C.text(value));
-        const existing=byKey.get(identity);
+        const position=byKey.get(identity),existing=position===undefined?null:questions[position];
         if (existing) {
-          existing.question_ids=[...new Set([...existing.question_ids,...ids])];
-          existing.explanations=[...new Set([...existing.explanations,...explanations.filter(Boolean)])];
-          existing.contexts=contexts({...existing,contexts:[...contexts(existing),...q.contexts]});
-          for(const field of ['source','analysis'])if(!existing[field]&&q[field])existing[field]=q[field];
+          const next={...existing,question_ids:[...(existing.question_ids||[])],explanations:[...(existing.explanations||[])]};
+          next.question_ids=[...new Set([...(existing.question_ids||[]),...ids])];
+          next.explanations=[...new Set([...(existing.explanations||[]),...explanations.filter(Boolean)])];
+          next.contexts=contexts({...existing,contexts:[...contexts(existing),...q.contexts]});
+          for(const field of ['source','analysis'])if(!next[field]&&q[field])next[field]=q[field];
+          if(C.stable(next)!==C.stable(existing))questions[position]=next;
           duplicates++;
         } else {
           q.record_id=await C.fingerprint(q);
           q.question_ids=[...ids]; q.explanations=[...new Set(explanations.filter(Boolean))];
-          questions.push(q); byKey.set(identity,q); added++;
+          byKey.set(identity,questions.length);questions.push(q);added++;
         }
       } catch (error) {
         rejected++;
@@ -60,10 +71,13 @@
         if (errors.length < 30) errors.push({index,error:error.message});
       }
     }
-    return {state:{...state,schema_version:1,questions,status:{...state.status,last_saved_at:new Date().toISOString(),last_error:rejected?`${rejected} 条记录无效，未保存`:null}},
+    const unchanged=questions.length===state.questions.length&&questions.every((q,i)=>q===state.questions[i]);
+    const saved=unchanged?state.questions:questions;indices.set(saved,{base:saved,positions:byKey});
+    return {state:{...state,schema_version:1,questions:saved,status:{...state.status,last_saved_at:new Date().toISOString(),last_error:rejected?`${rejected} 条记录无效，未保存`:null}},
       result:{added,duplicates,rejected,errors,total:questions.length}};
   }
   function summary(state) {
+    if(summaries.has(state.questions))return {...summaries.get(state.questions),...state.status};
     const counts=Object.fromEntries(C.TYPES.map(t => [t,0]));
     const stems=new Map(), ids=new Map(); let conflicts=0;
     for (const q of state.questions) {
@@ -77,7 +91,7 @@
         ids.set(identity,content);
       }
     }
-    return {total:state.questions.length,counts,conflicts,...state.status};
+    const result={total:state.questions.length,counts,conflicts};summaries.set(state.questions,result);return {...result,...state.status};
   }
   function exportBank(state) {
     const stats=summary(state);
@@ -85,5 +99,5 @@
       conflict_count:stats.conflicts,completeness:'unverified',public_reuse_permission:'unverified',
       collection_method:state.automation?'user_authorized_serial_collection':'user_loaded_practice_responses',exported_at:new Date().toISOString()}};
   }
-  globalThis.DhuBankStore=Object.freeze({KEY,empty,load,merge,summary,exportBank});
+  globalThis.DhuBankStore=Object.freeze({KEY,empty,load,key,merge,summary,exportBank});
 })();

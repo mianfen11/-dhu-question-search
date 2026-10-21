@@ -6,7 +6,7 @@
 
 - 网站：[web/](web/)，入口 [web/index.html](web/index.html)，正式数据 [web/question-bank.json](web/question-bank.json)。
 - [网站使用、数据结构、检索策略及验收说明](docs/search-site.md)。
-- [Chrome 扩展 1.2.0](extension/README.md)：正常登录后按授权串行收集、保存并导出；本次未修改扩展。
+- [Chrome 扩展 1.3.0](extension/README.md)：正常登录后按授权串行收集；增量持久化、安全迁移、回执恢复和 JSON 导出。
 - [原 Python JSON 导入工具](docs/import.md) 与 [此前公开来源调查](docs/investigation.md)。
 
 ## 本地运行

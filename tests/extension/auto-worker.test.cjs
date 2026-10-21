@@ -1,9 +1,9 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
-const {context,run,plain,row,page}=require('./helpers.cjs');
+const {context,run,plain,row,page,persisted}=require('./helpers.cjs');
 const popupURL='chrome-extension://auto-test/popup.html';
-const wait=async condition=>{for(let i=0;i<100;i++){if(condition())return;await new Promise(r=>setTimeout(r,2));}assert.fail('coordinator did not settle');};
+const wait=async condition=>{for(let i=0;i<1000;i++){if(condition())return;await new Promise(r=>setTimeout(r,2));}assert.fail('coordinator did not settle');};
 function environment(){
   const data={},network=[],posted=[],location={href:page,get hash(){return new URL(this.href).hash;}};let now=1000000,listener,alarmListener,worker,timers=new Map(),counter=0;
   const window={addEventListener(){},postMessage:message=>posted.push(plain(message)),fetch:async(target,init)=>{
@@ -33,12 +33,12 @@ function environment(){
   }
   boot();
   const send=(message,sender={id:'auto-test',url:popupURL})=>new Promise(resolve=>listener(message,sender,resolve));
-  return {data,network,posted,scripts,alarms,location,send,boot,get state(){return data.questionBankV1;},
+  return {data,network,posted,scripts,alarms,location,send,boot,get state(){return persisted(data);},
     async due(){
       const tasks=[...timers].filter(([,v])=>v.when<=now);for(const [id,t] of tasks){timers.delete(id);t.fn();}
       await new Promise(r=>setTimeout(r,3));
     },
-    advance(){now=Math.max(now,data.questionBankV1.automation.next_at);},alarm(){alarmListener({name:'dhu-auto'});}};
+    advance(){now=Math.max(now,persisted(data).automation.next_at);},alarm(){alarmListener({name:'dhu-auto'});}};
 }
 test('real background integration starts only from popup, closes popup independently and executes MAIN adapter into storage',async()=>{
   const h=environment();
