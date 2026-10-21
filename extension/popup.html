@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>题库收集器</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <h1>学生手册题目收集</h1>
+  <p>仅保存在此浏览器，不上传。请正常登录原站并手动进入章节练习。</p>
+  <dl>
+    <div><dt>已收集</dt><dd id="total">—</dd></div>
+    <div><dt>单选题</dt><dd id="one_choice">—</dd></div>
+    <div><dt>多选题</dt><dd id="multi_choice">—</dd></div>
+    <div><dt>判断题</dt><dd id="judge">—</dd></div>
+    <div><dt>待核对冲突</dt><dd id="conflicts">—</dd></div>
+  </dl>
+  <p id="saved">尚未读取本地题库</p>
+  <p id="storage-error" role="alert"></p>
+  <div class="actions"><button id="export" type="button">导出 JSON</button><button id="import" type="button">导入 JSON</button><button id="refresh" type="button">刷新统计</button></div>
+  <input id="file" type="file" accept=".json,application/json" hidden>
+  <p id="message" role="status" aria-live="polite"></p>
+  <p class="note">数量代表已保存的不同题目，不代表完整题库。相同题目重复加载会合并；不同章节分别保留。</p>
+  <script src="popup.js"></script>
+</body></html>
