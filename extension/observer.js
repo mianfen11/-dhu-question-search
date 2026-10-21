@@ -90,7 +90,9 @@
   }
   step='fetch';originalFetch=window.fetch;
   if(typeof originalFetch==='function')window.fetch=function(input,init) {
-    const meta=metadata(input,init),promise=Reflect.apply(originalFetch,this,arguments);
+    const automatic=globalThis.DhuAutoPage?.claimFetch(input,init);
+    const meta=automatic?null:metadata(input,init),promise=Reflect.apply(originalFetch,this,arguments);
+    if(automatic)void promise.then(response=>{automatic.status=response.status;automatic.finalURL=response.url;},()=>{});
     if(meta)void promise.then(async response=>{
       if(!responseAllowed(meta,response.status,response.url))return;
       try {emit(meta,await readJSON(response));}

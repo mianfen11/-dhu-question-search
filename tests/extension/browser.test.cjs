@@ -98,24 +98,24 @@ test('real Chromium MV3: SPA fetch/XHR collection, merge, popup import/export an
     await browser.evaluate(site,`new Promise(resolve=>{const x=new XMLHttpRequest();x.open('GET',${JSON.stringify(url.replace('one_choice','judge'))});x.onload=()=>resolve(x.status);x.send();})`);
     await waitFor(async()=> (await stats()).stats.total===3,'three types merged');
     await normalFetch(url.replace('chapter_id=1','chapter_id=2'));
-    await waitFor(async()=> (await stats()).stats.total===4,'second chapter');
+    await waitFor(async()=> (await stats()).stats.total===3,'cross-chapter duplicate merged');
     // Unknown messages and a different route cannot write to the extension.
     await browser.evaluate(site,"window.postMessage({marker:'dhu-question-bank/v1',version:1,meta:{path:'/wrong'},questions:[{password:'do-not-store'}]},location.origin)");
     await browser.evaluate(site,"location.hash='/main/chat'");await normalFetch(url);await delay(100);
-    assert.equal((await stats()).stats.total,4);assert.equal(apiRequests,7);
+    assert.equal((await stats()).stats.total,3);assert.equal(apiRequests,7);
     await browser.evaluate(popup,"document.getElementById('refresh').click()");
-    await waitFor(()=>browser.evaluate(popup,"document.getElementById('total').textContent==='4'"),'popup count');
+    await waitFor(()=>browser.evaluate(popup,"document.getElementById('total').textContent==='3'"),'popup count');
     const exportResult=await browser.evaluate(popup,"chrome.runtime.sendMessage({kind:'export'})");
     assert.equal(JSON.stringify(exportResult).includes('do-not-store'),false);
     const input=path.join(directory,'import.json');await fs.writeFile(input,JSON.stringify(exportResult.bank));
     const {root:dom}=await browser.send('DOM.getDocument',{},popup);
     const {nodeId}=await browser.send('DOM.querySelector',{nodeId:dom.nodeId,selector:'#file'},popup);
     await browser.send('DOM.setFileInputFiles',{nodeId,files:[input]},popup);
-    await waitFor(()=>browser.evaluate(popup,"document.getElementById('message').textContent.includes('合并 4')"),'popup JSON import');
+    await waitFor(()=>browser.evaluate(popup,"document.getElementById('message').textContent.includes('合并 3')"),'popup JSON import');
     await browser.evaluate(popup,"document.getElementById('export').click()");
     const exported=await waitFor(async()=> (await fs.readdir(downloads)).find(n=>n.endsWith('.json')),'popup JSON download');
     const bank=JSON.parse(await fs.readFile(path.join(downloads,exported),'utf8'));
-    assert.equal(bank.questions.length,4);
+    assert.equal(bank.questions.length,3);
     const python=spawnSync('python3',['tools/question_bank.py',path.join(downloads,exported),'-o',path.join(directory,'python-export.json')],{encoding:'utf8'});
     assert.equal(python.status,0,python.stderr);
     await browser.stop();browser=null;
@@ -123,8 +123,8 @@ test('real Chromium MV3: SPA fetch/XHR collection, merge, popup import/export an
     const popup2=await browser.target(extensionOrigin+'/popup.html');
     await waitFor(()=>browser.evaluate(popup2,"!!document.getElementById('total')"),'popup after restart');
     const persisted=await browser.evaluate(popup2,"chrome.runtime.sendMessage({kind:'stats'})");
-    assert.equal(persisted.stats.total,4);
-    assert.deepEqual(persisted.stats.counts,{one_choice:2,multi_choice:1,judge:1});
+    assert.equal(persisted.stats.total,3);
+    assert.deepEqual(persisted.stats.counts,{one_choice:1,multi_choice:1,judge:1});
   } catch (error) {
     if(error.code==='EXTENSION_BLOCKED') { t.skip(error.message); return; }
     throw error;

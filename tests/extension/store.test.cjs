@@ -7,7 +7,7 @@ test('repeated loads deduplicate, different batches and chapters merge',async ()
   let r=await S.merge(S.empty(),[row(),row()]);
   assert.equal(r.result.added,1); assert.equal(r.result.duplicates,1);
   r=await S.merge(r.state,[row({question_id:2,question:'另一题'}),row(),row({chapter_id:2})]);
-  assert.equal(r.state.questions.length,3); assert.equal(r.result.duplicates,1);
+  assert.equal(r.state.questions.length,2); assert.equal(r.result.duplicates,2);
 });
 test('duplicate IDs and explanation variants preserved, credentials discarded',async () => {
   const r=await S.merge(S.empty(),[row({password:'credential-marker',headers:{Authorization:'credential-marker'}}),row({question_id:99,source:'另解'})]);
@@ -37,4 +37,14 @@ test('storage persists across new engine loads; corrupt state never silently ove
   const newContext=context();run(newContext,'store.js');
   assert.equal((await newContext.DhuBankStore.load(storage)).questions.length,1);
   await assert.rejects(S.load({get:async()=>({[S.KEY]:{schema_version:9}})}));
+});
+
+test('legacy chapter-separated records migrate atomically and source contexts survive export/import',async()=>{
+  const first=await S.merge(S.empty(),[row({manual_id:'1',chapter_id:'1',source:'出处',analysis:'解析'})]);
+  const legacy=structuredClone(plain(first.state));
+  legacy.questions.push({...legacy.questions[0],chapter_id:'2',contexts:[{manual_id:'1',chapter_id:'2'}]});
+  const migrated=await S.merge(legacy,[]);assert.equal(migrated.state.questions.length,1);assert.equal(legacy.questions.length,2);
+  assert.equal(migrated.state.questions[0].contexts.length,2);
+  const roundtrip=await S.merge(S.empty(),c.DhuBankCore.unpack(S.exportBank(migrated.state)));
+  assert.equal(roundtrip.state.questions[0].contexts.length,2);assert.equal(roundtrip.state.questions[0].analysis,'解析');
 });

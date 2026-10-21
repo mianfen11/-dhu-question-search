@@ -1,6 +1,6 @@
 'use strict';
 const $=id => document.getElementById(id);
-let busy=false;
+let busy=false,automation=null;
 function showStats(stats) {
   $('total').textContent=String(stats.total);
   for (const kind of ['one_choice','multi_choice','judge']) $(kind).textContent=String(stats.counts[kind]);
@@ -8,13 +8,16 @@ function showStats(stats) {
   $('saved').textContent=stats.last_saved_at ? '最近保存：'+new Date(stats.last_saved_at).toLocaleString() : '尚未保存题目';
   $('storage-error').textContent=stats.last_error || '';
   if(stats.queue)showQueue(stats.queue);
+  automation=stats.automation||null;
+  showAutomatic(stats);
 }
 function showQueue(q) {
   const labels={idle:'未建立计划',tracking:'离线记录中（不自动访问）',paused:'已暂停离线记录',stopped:'已停止，历史任务进度保留',round_finished:'计划轮次已观察完，题库完整性未验证'};
   const manual=$('queue-manual'),selected=manual.value;
   manual.replaceChildren();
+  const current=document.createElement('option');current.value='';current.textContent='使用当前页面手册';manual.append(current);
   for(const c of q.catalogs){const o=document.createElement('option');o.value=c.manual_id;o.textContent='手册 '+c.manual_id+'（'+c.chapters.length+' 章）';manual.append(o);}
-  manual.value=q.catalogs.some(c=>c.manual_id===selected)?selected:q.manual_id||q.catalogs[0]?.manual_id||'';
+  manual.value=q.catalogs.some(c=>c.manual_id===selected)?selected:['tracking','paused'].includes(q.status)?q.manual_id||'':'';
   const active=['tracking','paused'].includes(q.status);
   manual.disabled=active;$('queue-rounds').disabled=active;
   $('queue-start').disabled=active||!q.catalogs.length;
@@ -28,6 +31,29 @@ function showQueue(q) {
   const tbody=$('chapter-progress');tbody.replaceChildren();
   for(const c of q.chapters){const tr=document.createElement('tr'),name=document.createElement('td'),counts=document.createElement('td');
     name.textContent=`${c.manual_id||'?'} / ${c.chapter_id||'?'} ${c.name||''}`;counts.textContent=`${c.total} / ${c.counts.one_choice} / ${c.counts.multi_choice} / ${c.counts.judge}`;tr.append(name,counts);tbody.append(tr);}
+}
+function showAutomatic(stats){
+  const a=stats.automation,active=a&&['running','paused'].includes(a.status);
+  $('auto-start').disabled=Boolean(active||a?.inflight);
+  $('auto-interval').disabled=Boolean(active);
+  if(!a)return;
+  if(active){$('queue-rounds').value=String(a.rounds);if(Number.isInteger(a.interval_ms))$('auto-interval').value=String(a.interval_ms/1000);}
+  $('queue-start').disabled=Boolean(active||a.inflight);
+  $('queue-pause').disabled=a.status!=='running';$('queue-resume').disabled=a.status!=='paused'||Boolean(a.inflight);
+  $('queue-stop').disabled=!active;
+  $('queue-manual').disabled=Boolean(active);$('queue-rounds').disabled=Boolean(active);
+  const labels={running:'自动收集中',paused:'自动收集已暂停',stopped:'自动收集已停止',completed:'设定轮次已完成，题库完整性未验证'};
+  const errors={user_pause:'用户暂停',user_stop:'用户停止',http_401:'401，请检查登录',http_403:'403，访问被拒绝',http_429:'429，访问过于频繁',network_error:'网络异常',request_aborted:'请求取消或20秒超时',response_shape:'响应结构异常',response_size:'响应超限',transport_unverified:'无法确认请求状态或目标地址',client_unavailable:'原站请求客户端不可用，请刷新题库页面后继续',page_busy:'页面上一请求尚未结束',receipt_missing:'请求回执丢失，已暂停防止自动重放；可明确点击继续重试',page_unavailable:'原标签页文档已关闭或刷新，请打开题库页面后继续',rows_rejected:'部分题目未通过解析，任务保留待处理',storage_error:'本地存储失败，任务回执待恢复'};
+  const task=stats.queue?.next,p=stats.queue?.progress||{observed:0,total:0,duplicates:0};
+  const round=task?.round||a.rounds;
+  const added=(stats.queue?.progress?.total? a.round_results.find(r=>r.round===round)?.added:null)??0;
+  // Current round includes partial completed tasks; the coordinator provides totals from persistent tasks.
+  const currentAdded=stats.automation_round_added??added;
+  const types={one_choice:'单选',multi_choice:'多选',judge:'判断'};
+  $('queue-status').textContent=(labels[a.status]||'未知状态')+`。当前章节 ${task?.chapter_id||'—'}，题型 ${types[task?.question_type]||'—'}，第 ${round}/${a.rounds} 轮；任务 ${p.observed}/${p.total}；本轮新增 ${currentAdded}，重复 ${p.duplicates}。`+
+    (a.phase==='chapters'?'正在获取章节清单。':'')+
+    '最近请求：'+(a.last_request_at?new Date(a.last_request_at).toLocaleString():'尚未请求')+'。最近错误：'+(errors[stats.automation_error||a.last_error]||'无')+'。'+
+    a.round_results.map(r=>`第 ${r.round} 轮新增 ${r.added}。`).join('');
 }
 async function send(message) {
   const response=await chrome.runtime.sendMessage(message);
@@ -103,7 +129,17 @@ setInterval(()=>{if(!busy)void diagnoseActiveTab();},1000);
 
 for(const [id,command] of [['queue-start','start'],['queue-pause','pause'],['queue-resume','resume'],['queue-stop','stop']]) {
   $(id).addEventListener('click',()=>action(async()=>{
-    const response=await send({kind:'queue_control',action:command,manual_id:$('queue-manual').value,rounds:Number($('queue-rounds').value)});
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    const response=await send(automation&&['running','paused'].includes(automation.status)?
+      {kind:'auto_control',action:command,tab_id:tab?.id}:
+      {kind:'queue_control',action:command,manual_id:$('queue-manual').value,rounds:Number($('queue-rounds').value)});
     showStats(response.stats);
   }));
 }
+
+$('auto-start').addEventListener('click',()=>action(async()=>{
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  const response=await send({kind:'auto_start',tab_id:tab?.id,manual_id:$('queue-manual').value||null,
+    rounds:Number($('queue-rounds').value),interval_seconds:Number($('auto-interval').value)});
+  showStats(response.stats);
+}));

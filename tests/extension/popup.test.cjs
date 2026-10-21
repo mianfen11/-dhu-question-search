@@ -4,16 +4,16 @@ const {context,run}=require('./helpers.cjs');
 const tick=()=>new Promise(r=>setTimeout(r,10));
 function popup() {
   const elements={};
-  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail','queue-manual','queue-rounds','queue-start','queue-pause','queue-resume','queue-stop','queue-status','chapter-progress','auto-start'])
+  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail','queue-manual','queue-rounds','queue-start','queue-pause','queue-resume','queue-stop','queue-status','chapter-progress','auto-start','auto-interval'])
     elements[id]={textContent:'',disabled:false,value:'',files:[],children:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},click(){this.listeners.click?.();}};
-  elements['queue-rounds'].value='1';elements['auto-start'].disabled=true;
+  elements['queue-rounds'].value='1';elements['auto-interval'].value='5';
   const controls=[];
   let error=null, importJSON,download,diagnostic={status:'waiting',reason:'ready',captured:0,parsed:0,saved:0,rejected:0},missing=false;
   const stats={total:3,counts:{one_choice:1,multi_choice:1,judge:1},conflicts:0,last_saved_at:null,last_error:null};
   const bank={schema_version:1,questions:[],report:{}};
   const chrome={tabs:{query:async()=>[{id:7}],sendMessage:async()=>{if(missing)throw new Error('sensitive internal error');return {ok:true,diagnostic};}},runtime:{sendMessage:async message=>{
     if(error) return {ok:false,error};
-    if(message.kind==='queue_control'){controls.push(message);return {ok:true,stats};}
+    if(['queue_control','auto_start','auto_control'].includes(message.kind)){controls.push(message);return {ok:true,stats};}
     if(message.kind==='export') return {ok:true,bank};
     if(message.kind==='import'){importJSON=message.json;return {ok:true,stats,result:{added:1,duplicates:2,rejected:0,errors:[]}};}
     return {ok:true,stats};
@@ -59,15 +59,28 @@ test('popup displays all five diagnostic outcomes and never renders untrusted re
   assert.match(p.elements['diagnostic-detail'].textContent,/未找到扩展接收器/);
 });
 
-test('offline plan UI exposes statistics and controls while active automation stays disabled',async()=>{
+test('offline plan UI exposes statistics and controls and allows an explicitly started automatic plan',async()=>{
   const p=popup();await tick();
   p.stats.queue={status:'tracking',catalogs:[{manual_id:'1',chapters:[{chapter_id:'1',name:'章节'}]}],manual_id:'1',
     progress:{observed:1,total:6,added:2,duplicates:3,rejected:0},next:{chapter_id:'2',question_type:'judge',round:1},
     chapters:[{manual_id:'1',chapter_id:'1',name:'<img onerror=bad>',total:2,counts:{one_choice:1,multi_choice:1,judge:0}}]};
   p.elements.refresh.click();await tick();
   assert.match(p.elements['queue-status'].textContent,/新增 2，重复 3/);
-  assert.equal(p.elements['queue-pause'].disabled,false);assert.equal(p.elements['auto-start'].disabled,true);
+  assert.equal(p.elements['queue-pause'].disabled,false);assert.equal(p.elements['auto-start'].disabled,false);
   assert.equal(p.elements['chapter-progress'].children[0].children[0].innerHTML,undefined);
   p.elements['queue-pause'].click();await tick();assert.equal(p.controls[0].action,'pause');
+  p.elements.export.click();await tick();assert.match(p.download.name,/\.json$/);
+});
+
+test('popup starts automatic mode with selected limits and renders running round/error state',async()=>{
+  const p=popup();await tick();p.elements['auto-start'].click();await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(p.controls[0])),{kind:'auto_start',tab_id:7,manual_id:null,rounds:1,interval_seconds:5});
+  p.stats.queue={status:'tracking',catalogs:[],chapters:[],progress:{observed:1,total:6,added:2,duplicates:3,rejected:0},next:{chapter_id:'2',question_type:'judge',round:1}};
+  p.stats.automation={status:'running',phase:'questions',rounds:2,last_request_at:1000,last_error:'http_429',round_results:[]};
+  p.stats.automation_round_added=2;
+  p.elements.refresh.click();await tick();
+  assert.match(p.elements['queue-status'].textContent,/自动收集中/);assert.match(p.elements['queue-status'].textContent,/本轮新增 2/);
+  assert.match(p.elements['queue-status'].textContent,/429/);assert.equal(p.elements['auto-start'].disabled,true);
+  p.elements['queue-pause'].click();await tick();assert.equal(p.controls[1].kind,'auto_control');assert.equal(p.controls[1].action,'pause');
   p.elements.export.click();await tick();assert.match(p.download.name,/\.json$/);
 });

@@ -57,7 +57,7 @@ test('manifest limits storage and MAIN injection permissions to the required sit
   assert.equal(m.content_scripts[1].world,'MAIN');
   assert.equal(m.content_scripts[1].js[0],'main-bootstrap.js');
   assert.deepEqual(m.content_scripts[0].js,['entities.js','core.js','handshake.js','content.js']);
-  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage','scripting']);
+  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage','scripting','alarms']);
   assert.deepEqual(m.host_permissions,['https://aidhu.net/','https://aidhu.net/web/*']);assert.equal(m.externally_connectable,undefined);
   assert.ok(m.content_scripts.every(s=>s.run_at==='document_start'&&s.matches.length===2&&s.matches[0]==='https://aidhu.net/'&&s.matches[1]==='https://aidhu.net/web/*'&&!s.all_frames));
   assert.match(m.content_security_policy.extension_pages,/connect-src 'none'/);
@@ -132,15 +132,15 @@ test('full observer-to-storage chain saves all async types across Vue chapter ch
   await waitForTotal(3);
   location.href=page.replace('chapter_id=1','chapter_id=2');
   for(const kind of ['one_choice','multi_choice','judge']) await window.fetch(url.replace('one_choice',kind).replace('chapter_id=1','chapter_id=2'));
-  const stats=await waitForTotal(6);
-  assert.deepEqual(plain(stats.counts),{one_choice:2,multi_choice:2,judge:2});
+  const stats=await waitForTotal(3);
+  assert.deepEqual(plain(stats.counts),{one_choice:1,multi_choice:1,judge:1});
   await window.fetch(url.replace('chapter_id=1','chapter_id=2'));
   for(let i=0;i<100 && responses.length<7;i++) await new Promise(resolve=>setTimeout(resolve,5));
   assert.equal(responses.length,7);assert.equal(responses[6].result.duplicates,1);
   location.href='https://aidhu.net/web/#/main/chat';
   await window.fetch(url);
   await new Promise(resolve=>setTimeout(resolve,30));
-  assert.equal((await w.send({kind:'stats'})).stats.total,6);
+  assert.equal((await w.send({kind:'stats'})).stats.total,3);
   assert.equal(requests,8,'collector must not make any extra requests');
 });
 
@@ -205,4 +205,10 @@ test('offline queue persists across workers, counts responses atomically and ref
   assert.equal((await restarted.send({kind:'queue_control',action:'resume'})).ok,false);
   assert.equal(JSON.stringify(w.data),before);
   assert.equal((await restarted.send({kind:'export'})).bank.questions.length,1);
+});
+
+test('automatic start never forwards raw Chrome injection errors containing private URLs',async()=>{
+  const w=worker({scripting:{executeScript:async()=>{throw new Error('Cannot access https://aidhu.net/?token=private-marker');}}});
+  const r=await w.send({kind:'auto_start',tab_id:7});assert.equal(r.ok,false);
+  assert.equal(JSON.stringify(r).includes('private-marker'),false);assert.match(r.error,/访问权限/);
 });

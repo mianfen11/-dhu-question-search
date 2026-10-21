@@ -3,7 +3,7 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>题库收集器</title><link rel="stylesheet" href="popup.css"></head>
 <body>
   <h1>学生手册题目收集</h1>
-  <p>仅保存在此浏览器，不上传。请正常登录原站并手动进入章节练习。</p>
+  <p>仅保存在此浏览器，不上传。请正常登录原站，保持题库标签页打开。</p>
   <dl>
     <div><dt>已收集</dt><dd id="total">—</dd></div>
     <div><dt>单选题</dt><dd id="one_choice">—</dd></div>
@@ -12,13 +12,14 @@
     <div><dt>待核对冲突</dt><dd id="conflicts">—</dd></div>
   </dl>
   <section aria-label="当前标签页诊断"><strong id="diagnostic-status" role="status">正在检查监听状态…</strong><p id="diagnostic-detail"></p></section>
-  <section class="queue" aria-label="离线收集计划">
+  <section class="queue" aria-label="收集计划">
     <h2>自动收集计划</h2>
-    <p id="queue-permission">平台自动化许可和频率未确认。自动访问未启用，下方仅记录用户正常练习，不自动请求或切换页面。</p>
-    <button id="auto-start" type="button" disabled>自动收集（待平台授权）</button>
-    <label>已观察手册 <select id="queue-manual" aria-label="计划手册"></select></label>
-    <label>有限观察轮次 <input id="queue-rounds" type="number" min="1" max="10" value="1"></label>
-    <div class="actions"><button id="queue-start" type="button">开始离线记录</button><button id="queue-pause" type="button">暂停</button><button id="queue-resume" type="button">继续</button><button id="queue-stop" type="button">停止</button></div>
+    <p id="queue-permission">自动化已获用户授权。默认间隔 5 秒、1 轮；保持目标标签页打开，弹窗可关闭。</p>
+    <button id="auto-start" type="button">开始自动收集</button>
+    <label>手册（可从当前页面识别） <select id="queue-manual" aria-label="计划手册"></select></label>
+    <label>轮数 <input id="queue-rounds" type="number" min="1" max="10" value="1"></label>
+    <label>请求间隔（秒，至少5）<input id="auto-interval" type="number" min="5" max="86400" value="5"></label>
+    <div class="actions"><button id="queue-start" type="button">仅离线记录</button><button id="queue-pause" type="button">暂停</button><button id="queue-resume" type="button">继续</button><button id="queue-stop" type="button">停止</button></div>
     <p id="queue-status" role="status">请先在原站正常打开章节列表。</p>
     <div class="table-wrap"><table><thead><tr><th>手册/章节</th><th>总/单/多/判</th></tr></thead><tbody id="chapter-progress"></tbody></table></div>
   </section>
@@ -27,6 +28,6 @@
   <div class="actions"><button id="export" type="button">导出 JSON</button><button id="import" type="button">导入 JSON</button><button id="refresh" type="button">刷新统计</button></div>
   <input id="file" type="file" accept=".json,application/json" hidden>
   <p id="message" role="status" aria-live="polite"></p>
-  <p class="note">数量代表已保存的不同题目，不代表完整题库。相同题目重复加载会合并；不同章节分别保留。</p>
+  <p class="note">数量代表已保存的不同题目，不代表完整题库。相同题目跨章节合并，保留章节来源；选项或答案冲突分别保留。</p>
   <script src="popup.js"></script>
 </body></html>

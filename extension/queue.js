@@ -90,13 +90,18 @@
     const q=read(bank),chapters=[];
     for(const catalog of q.catalogs)for(const c of catalog.chapters)chapters.push({manual_id:catalog.manual_id,chapter_id:c.chapter_id,name:c.name,total:0,counts:Object.fromEntries(C.TYPES.map(t=>[t,0]))});
     for(const question of bank.questions) {
-      let chapter=chapters.find(c=>c.manual_id===question.manual_id && c.chapter_id===question.chapter_id);
-      if(!chapter){chapter={manual_id:question.manual_id,chapter_id:question.chapter_id,total:0,counts:Object.fromEntries(C.TYPES.map(t=>[t,0]))};chapters.push(chapter);}
-      chapter.total++;chapter.counts[question.question_type]++;
+      const contexts=Array.isArray(question.contexts)&&question.contexts.length?question.contexts:[question];
+      const seen=new Set();
+      for(const context of contexts){
+        const key=JSON.stringify([context.manual_id,context.chapter_id]);if(seen.has(key))continue;seen.add(key);
+        let chapter=chapters.find(c=>c.manual_id===context.manual_id && c.chapter_id===context.chapter_id);
+        if(!chapter){chapter={manual_id:context.manual_id,chapter_id:context.chapter_id,total:0,counts:Object.fromEntries(C.TYPES.map(t=>[t,0]))};chapters.push(chapter);}
+        chapter.total++;chapter.counts[question.question_type]++;
+      }
     }
     const progress=q.tasks.reduce((r,t)=>{r[t.status==='observed'?'observed':'pending']++;r.added+=t.added;r.duplicates+=t.duplicates;r.rejected+=t.rejected;return r;},
       {total:q.tasks.length,observed:0,pending:0,added:0,duplicates:0,rejected:0});
-    return {status:q.status,permission:'unverified',automation_enabled:false,completeness:'unverified',pause_reason:q.pause_reason,
+    return {status:q.status,permission:bank.automation?'user_authorized':'unverified',automation_enabled:Boolean(bank.automation),completeness:'unverified',pause_reason:q.pause_reason,
       manual_id:q.manual_id,rounds:q.rounds,catalogs:q.catalogs,progress,chapters,next:q.tasks.find(t=>t.status==='pending')||null};
   }
   globalThis.DhuQueue=Object.freeze({empty,read,catalog,control,blocked,alreadyProcessed,observe,summary});

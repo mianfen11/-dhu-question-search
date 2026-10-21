@@ -9,30 +9,50 @@
     if (!C.object(state) || state.schema_version !== 1 || !Array.isArray(state.questions) || !C.object(state.status)) throw new Error('本地题库格式异常，已停止写入以保护数据');
     return state;
   }
+  function key(q){return C.stable({question_type:q.question_type,question:q.question,options:q.options,answer:q.answer});}
+  function contexts(q){
+    const values=[{manual_id:q.manual_id,chapter_id:q.chapter_id},...(Array.isArray(q.contexts)?q.contexts:[])];
+    const result=[];
+    for(const v of values){if(!C.object(v))continue;
+      const valid=x=>x===null||typeof x==='string'&&/^[1-9]\d{0,15}$/.test(x);
+      if(!valid(v.manual_id)||!valid(v.chapter_id))continue;
+      if(!result.some(c=>c.manual_id===v.manual_id&&c.chapter_id===v.chapter_id))result.push({manual_id:v.manual_id,chapter_id:v.chapter_id});
+    }return result;
+  }
   async function merge(state, rows) {
     if (!Array.isArray(rows) || rows.length > 50000) throw new Error('单次最多导入 50000 条题目');
-    const questions=state.questions.map(q => ({...q,question_ids:[...(q.question_ids||[])],explanations:[...(q.explanations||[])]}));
-    const byKey=new Map(questions.map(q => [C.stable(C.content(q)),q]));
+    // Migrate existing chapter-separated duplicates during the same atomic write.
+    const questions=[],byKey=new Map();
+    for(const original of state.questions){
+      const q={...original,question_ids:[...(original.question_ids||[])],explanations:[...(original.explanations||[])],contexts:contexts(original)};
+      const existing=byKey.get(key(q));
+      if(existing){existing.question_ids=[...new Set([...existing.question_ids,...q.question_ids])];existing.explanations=[...new Set([...existing.explanations,...q.explanations])];existing.contexts=contexts({...existing,contexts:[...existing.contexts,...q.contexts]});
+        for(const field of ['source','analysis'])if(!existing[field]&&q[field])existing[field]=q[field];
+      }else{questions.push(q);byKey.set(key(q),q);}
+    }
     let added=0, duplicates=0, rejected=0;
     const errors=[];
     for (let index=0; index<rows.length; index++) {
       try {
-        const row=rows[index], q=C.normalize(row), key=C.stable(C.content(q));
+        const row=rows[index], q=C.normalize(row), identity=key(q);
+        q.source=C.text(row.source);q.analysis=C.text(row.analysis);q.contexts=contexts({...q,contexts:row.contexts});
         // Never retain arbitrary imported/raw properties, tokens, headers or cookies.
         const explanations=[q.explanation];
         for (const field of ['explanation','analysis','source']) if (row[field] != null) explanations.push(C.text(row[field]));
         if (Array.isArray(row.explanations)) for (const s of row.explanations.slice(0,100)) explanations.push(C.text(s));
         const ids = new Set(q.question_id ? [q.question_id] : []);
         if (Array.isArray(row.question_ids)) for (const value of row.question_ids.slice(0,100)) if (value != null && C.text(value)) ids.add(C.text(value));
-        const existing=byKey.get(key);
+        const existing=byKey.get(identity);
         if (existing) {
           existing.question_ids=[...new Set([...existing.question_ids,...ids])];
           existing.explanations=[...new Set([...existing.explanations,...explanations.filter(Boolean)])];
+          existing.contexts=contexts({...existing,contexts:[...contexts(existing),...q.contexts]});
+          for(const field of ['source','analysis'])if(!existing[field]&&q[field])existing[field]=q[field];
           duplicates++;
         } else {
           q.record_id=await C.fingerprint(q);
           q.question_ids=[...ids]; q.explanations=[...new Set(explanations.filter(Boolean))];
-          questions.push(q); byKey.set(key,q); added++;
+          questions.push(q); byKey.set(identity,q); added++;
         }
       } catch (error) {
         rejected++;
@@ -48,7 +68,7 @@
     const stems=new Map(), ids=new Map(); let conflicts=0;
     for (const q of state.questions) {
       counts[q.question_type]++;
-      const key=C.stable(C.content(q,false)), answer=JSON.stringify(q.answer);
+      const key=C.stable({question_type:q.question_type,question:q.question}), answer=C.stable({answer:q.answer,options:q.options});
       if (stems.has(key) && stems.get(key) !== answer) conflicts++;
       stems.set(key,answer);
       for (const id of q.question_ids || []) {
@@ -63,7 +83,7 @@
     const stats=summary(state);
     return {schema_version:1,questions:state.questions,report:{unique_records:stats.total,counts_by_type:stats.counts,
       conflict_count:stats.conflicts,completeness:'unverified',public_reuse_permission:'unverified',
-      collection_method:'user_loaded_practice_responses',exported_at:new Date().toISOString()}};
+      collection_method:state.automation?'user_authorized_serial_collection':'user_loaded_practice_responses',exported_at:new Date().toISOString()}};
   }
   globalThis.DhuBankStore=Object.freeze({KEY,empty,load,merge,summary,exportBank});
 })();
