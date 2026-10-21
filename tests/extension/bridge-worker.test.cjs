@@ -6,6 +6,7 @@ const popupURL='chrome-extension://test-extension/popup.html';
 function worker(options={}) {
   const data={};let listener,access;
   const chrome={runtime:{id:'test-extension',getURL:()=>popupURL,onMessage:{addListener:fn=>listener=fn}},
+    scripting:options.scripting || {executeScript:async()=>{throw new Error('missing host permission');}},
     storage:{local:{setAccessLevel:async x=>{access=x.accessLevel;if(options.failAccess)throw new Error('private-access-error');},get:async key=>{if(options.failRead)throw new Error('private-read-error');return {[key]:structuredClone(data[key])};},
       set:async value=>{await new Promise(r=>setTimeout(r,2));Object.assign(data,structuredClone(plain(value)));}}}};
   const c=context({chrome});c.importScripts=(...files)=>files.forEach(file=>run(c,file));run(c,'background.js');
@@ -15,7 +16,7 @@ function worker(options={}) {
   return {data,c,send,payload,siteSender,get access(){return access;}};
 }
 test('isolated bridge only accepts same-window, exact-origin validated practice batches',async () => {
-  let handler;const sent=[],window={addEventListener:(name,fn)=>handler=fn};
+  const handlers=[],handler=e=>handlers.forEach(fn=>fn(e));const sent=[],window={addEventListener:(name,fn)=>handlers.push(fn)};
   const location={href:page},c=context({window,location,chrome:{runtime:{sendMessage:async m=>{sent.push(plain(m));return {ok:true};}}}});
   run(c,'content.js');const data={marker:c.DhuBankCore.MARKER,version:1,meta:c.DhuBankCore.endpoint(url),questions:[row()]};
   handler({source:{},origin:'https://aidhu.net',data});
@@ -50,12 +51,14 @@ test('worker imports/export roundtrip, invalid imports leave saved records untou
   assert.equal((await w.send({kind:'import',json:'invalid json'})).ok,false);
   assert.equal((await w.send({kind:'stats'})).stats.total,1);
 });
-test('manifest grants storage only, limits scripts to target site, excludes external connections',() => {
+test('manifest limits storage and MAIN injection permissions to the required site',() => {
   const m=JSON.parse(fs.readFileSync(root+'/manifest.json','utf8'));
   assert.equal(m.content_scripts[0].world,'ISOLATED');
   assert.equal(m.content_scripts[1].world,'MAIN');
-  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage']);
-  assert.equal(m.host_permissions,undefined);assert.equal(m.externally_connectable,undefined);
+  assert.equal(m.content_scripts[1].js[0],'main-bootstrap.js');
+  assert.deepEqual(m.content_scripts[0].js,['entities.js','core.js','handshake.js','content.js']);
+  assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage','scripting']);
+  assert.deepEqual(m.host_permissions,['https://aidhu.net/','https://aidhu.net/web/*']);assert.equal(m.externally_connectable,undefined);
   assert.ok(m.content_scripts.every(s=>s.run_at==='document_start'&&s.matches.length===2&&s.matches[0]==='https://aidhu.net/'&&s.matches[1]==='https://aidhu.net/web/*'&&!s.all_frames));
   assert.match(m.content_security_policy.extension_pages,/connect-src 'none'/);
 });
@@ -112,7 +115,7 @@ test('full observer-to-storage chain saves all async types across Vue chapter ch
     const response=await w.send(plain(message),sender);responses.push(response);return response;
   }}}});
   run(isolated,'content.js');
-  const main=context({window,location});run(main,'observer.js');
+  const main=context({window,location});run(main,'main-bootstrap.js');run(main,'observer.js');
   assert.equal(requests,0);
   // This first request starts before the router writes the browser's new hash.
   const first=window.fetch(url);location.href=page;await first;
@@ -152,4 +155,27 @@ test('worker diagnoses access/read/write failure and accepts the app root withou
   const r=await w.send({kind:'collect',pageHref:page.replace('/web/','/'),payload:w.payload},
     {...w.siteSender,url:'https://aidhu.net/'});
   assert.equal(r.ok,true);assert.equal(r.stats.total,1);
+});
+
+test('MAIN recovery uses Chrome scripting MAIN world pinned to the original document',async()=>{
+  const calls=[],w=worker({scripting:{executeScript:async args=>{calls.push(args);return [{result:args.func?'installed':undefined}];}}});
+  const sender={...w.siteSender,documentId:'current-document'};
+  const r=await w.send({kind:'ensure_main'},sender);
+  assert.equal(r.ok,true);assert.equal(r.reason,'main_injection_ok');assert.equal(calls.length,2);
+  for(const call of calls){assert.equal(call.world,'MAIN');assert.equal(call.injectImmediately,true);assert.deepEqual(plain(call.target),{tabId:1,documentIds:['current-document']});}
+  assert.deepEqual(plain(calls[0].files),['main-bootstrap.js','entities.js','core.js','observer.js']);
+});
+test('MAIN recovery rejects foreign sites, iframes, popup calls and missing document identity',async()=>{
+  let calls=0;const w=worker({scripting:{executeScript:async()=>{calls++;return [];}}});
+  for(const sender of [{...w.siteSender,documentId:'doc',url:'https://evil.test/'},{...w.siteSender,documentId:'doc',frameId:1},w.siteSender])
+    assert.equal((await w.send({kind:'ensure_main'},sender)).ok,false);
+  assert.equal((await w.send({kind:'ensure_main'})).ok,false);
+  assert.equal((await w.send({kind:'ensure_main'},w.siteSender)).reason,'main_document_unidentified');assert.equal(calls,0);
+});
+test('Chrome MAIN injection errors are categorized without forwarding raw URLs or tokens',async()=>{
+  for(const [error,reason] of [['Refused to execute due to Content Security Policy secret-token','main_csp_blocked'],['Cannot access contents of url https://aidhu.net/?token=secret-token. Missing host permission','main_injection_denied'],['No document with id secret-token','main_document_gone'],['Could not load file core.js secret-token','main_file_missing']]){
+    const w=worker({scripting:{executeScript:async()=>{throw new Error(error);}}});
+    const r=await w.send({kind:'ensure_main'},{...w.siteSender,documentId:'doc'});
+    assert.equal(r.reason,reason);assert.equal(JSON.stringify(r).includes('secret-token'),false);
+  }
 });

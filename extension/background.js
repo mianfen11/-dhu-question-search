@@ -8,9 +8,39 @@ const popupURL=chrome.runtime.getURL('popup.html');
 function validSite(url) {
   return C.isAppDocument(url);
 }
+// Injection is restricted to the authenticated top-level content-script document.
+function injectionFailure(error) {
+  const message=String(error?.message||'');
+  if(/content security policy|\bCSP\b|refused to execute/i.test(message))return 'main_csp_blocked';
+  if(/permission|cannot access|not allowed|disabled|cannot be scripted/i.test(message))return 'main_injection_denied';
+  if(/no (?:frame|document|tab)|frame.*removed|document.*(?:removed|unloaded)|tab.*closed/i.test(message))return 'main_document_gone';
+  if(/could not load file|cannot find|failed to load.*file/i.test(message))return 'main_file_missing';
+  return 'main_injection_failed';
+}
+async function ensureMain(sender) {
+  if(!Number.isInteger(sender.tab?.id) || typeof sender.documentId!=='string' || !/^[a-zA-Z0-9-]{1,128}$/.test(sender.documentId))
+    return {ok:false,reason:'main_document_unidentified'};
+  const target={tabId:sender.tab.id,documentIds:[sender.documentId]};
+  try {
+    await chrome.scripting.executeScript({target,world:'MAIN',injectImmediately:true,
+      files:['main-bootstrap.js','entities.js','core.js','observer.js']});
+    const results=await chrome.scripting.executeScript({target,world:'MAIN',injectImmediately:true,func:()=>{
+      const boot=globalThis.__dhuMainBridgeV3;
+      return boot?.version===3 && typeof boot.phase==='function'?boot.phase():'unseen';
+    }});
+    const phase=results?.[0]?.result;
+    const reasons={core_missing:'main_core_missing',entities_missing:'main_entities_missing',observer_pending:'main_observer_pending',observer_init_failed:'main_observer_init_failed',fetch_patch_failed:'main_fetch_patch_failed',xhr_patch_failed:'main_xhr_patch_failed'};
+    if(['installed','hook_replaced'].includes(phase))return {ok:true,reason:'main_injection_ok',phase};
+    return {ok:false,reason:reasons[phase]||'main_result_invalid',...(C.MAIN_PHASES.includes(phase)?{phase}:{})};
+  } catch(error) {return {ok:false,reason:injectionFailure(error)};}
+}
 async function handle(message,sender) {
   if (sender.id !== chrome.runtime.id || !C.object(message)) throw new Error('来源无效');
   const isPopup=sender.url===popupURL;
+  if(message.kind==='ensure_main') {
+    if(Object.keys(message).join(',')!=='kind' || !sender.tab || sender.frameId!==0 || !validSite(sender.url))throw new Error('注入来源无效');
+    return ensureMain(sender);
+  }
   let rows;
   if (message.kind==='collect') {
     // sender.tab.url is tab metadata, not a reliable Vue hash-route clock.

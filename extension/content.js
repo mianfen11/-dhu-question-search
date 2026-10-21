@@ -3,9 +3,8 @@
   'use strict';
   const C=globalThis.DhuBankCore;
   let queue=[], draining=false, observerReady=false;
-  const state={status:'not_injected',reason:'observer_missing',captured:0,parsed:0,saved:0,rejected:0};
+  const state={status:'not_injected',reason:'handshake_pending',captured:0,parsed:0,saved:0,rejected:0};
   const update=(status,reason)=>{state.status=status;state.reason=reason;};
-  const probe=()=>window.postMessage?.({marker:C.DIAG_MARKER,version:1,event:'probe',reason:'none',count:0},'https://aidhu.net');
   async function drain() {
     if (draining) return;
     draining=true;
@@ -36,12 +35,8 @@
       try {
         const d=C.diagnostic(event.data);
         if (d.event==='probe') return;
-        if (d.event==='ready') {
-          observerReady=true;
-          if(d.reason==='hook_replaced')update('waiting','hook_replaced');
-          else if(state.status==='not_injected')update('waiting','ready');
-        } else if(C.isPracticePage(location.href)) {
-          observerReady=true;
+        if (d.event==='ready') return; // An unsolicited ready is not a bidirectional handshake.
+        if(C.isPracticePage(location.href)) {
           if(d.event==='captured') { state.captured++;update('captured','response_pending'); }
           else if(d.event==='parse_error'){
             state.rejected+=d.count;
@@ -57,13 +52,23 @@
       if(queue.length>=200) {update('parse_error','queue_full');return;}
       queue.push({message:safe,href:location.href});void drain();
     } catch {update('parse_error','bridge_rejected');}
-  });
+  },true);
   // Ask MAIN to prove its listener is alive. No requests or question data are sent.
   chrome.runtime.onMessage?.addListener((message,sender,sendResponse)=>{
     if(message?.kind!=='diagnose' || sender.id!==chrome.runtime.id || sender.url!==chrome.runtime.getURL('popup.html'))return;
-    probe();
+    handshake.probe();
     setTimeout(()=>sendResponse({ok:true,diagnostic:{...state,observerReady}}),150);
     return true;
   });
-  probe();
+  const handshake=globalThis.DhuHandshake.start({
+    recover:()=>chrome.runtime.sendMessage({kind:'ensure_main'}),
+    onState:detail=>{
+      state.handshake=detail;
+      if(detail.pending)return;
+      observerReady=detail.ready;
+      if(!detail.ready)update('not_injected',detail.reason);
+      else if(detail.reason==='hook_replaced')update('waiting','hook_replaced');
+      else if(state.status==='not_injected' || (state.status==='waiting' && detail.reason==='ready_recovered'))update('waiting',detail.reason);
+    }
+  });
 })();

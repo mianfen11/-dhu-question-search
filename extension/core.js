@@ -12,12 +12,20 @@
   const object = o => o !== null && typeof o === 'object' && !Array.isArray(o);
   const first = (o, ...keys) => { for (const k of keys) if (own(o,k) && o[k] != null) return o[k]; return null; };
   const DIAG_MARKER = 'dhu-question-bank/diagnostic-v1';
-  const DIAG_REASONS = Object.freeze(['none','ready','response_pending','json','shape','size','row_schema','endpoint_context','http_status','redirect','network','unsupported_xhr','bridge_rejected','queue_full','saving','normalization','storage_access','storage_read','storage_write','background_unreachable','saved','empty','observer_missing','bridge_missing','diagnostic_invalid','hook_replaced']);
+  const DIAG_REASONS = Object.freeze(['none','ready','response_pending','json','shape','size','row_schema','endpoint_context','http_status','redirect','network','unsupported_xhr','bridge_rejected','queue_full','saving','normalization','storage_access','storage_read','storage_write','background_unreachable','saved','empty','observer_missing','bridge_missing','diagnostic_invalid','hook_replaced','handshake_pending','main_bootstrap_timeout','main_ack_timeout','main_confirm_timeout','main_core_missing','main_entities_missing','main_observer_pending','main_observer_init_failed','main_fetch_patch_failed','main_xhr_patch_failed','main_csp_blocked','main_injection_denied','main_document_gone','main_document_unidentified','main_file_missing','main_injection_failed','main_result_invalid','ready_recovered']);
   function diagnostic(value) {
     if (!object(value) || Object.keys(value).sort().join(',') !== 'count,event,marker,reason,version' ||
         value.marker !== DIAG_MARKER || value.version !== 1 || !['probe','ready','captured','parse_error'].includes(value.event) ||
         !DIAG_REASONS.includes(value.reason) || !Number.isSafeInteger(value.count) || value.count < 0 || value.count > 10000) throw new Error('诊断消息无效');
     return {marker:DIAG_MARKER,version:1,event:value.event,reason:value.reason,count:value.count};
+  }
+  const HANDSHAKE_MARKER='dhu-question-bank/handshake-v3';
+  const MAIN_PHASES=Object.freeze(['booting','core_missing','entities_missing','observer_pending','observer_init_failed','fetch_patch_failed','xhr_patch_failed','installed','hook_replaced']);
+  function handshake(d) {
+    if(!object(d) || Object.keys(d).sort().join(',')!=='marker,phase,seq,session,type,version' || d.marker!==HANDSHAKE_MARKER || d.version!==3 ||
+        !['hello','challenge','ack','confirm','confirmed'].includes(d.type) || !MAIN_PHASES.includes(d.phase) || !Number.isSafeInteger(d.seq) || d.seq<0 || d.seq>1000000 ||
+        typeof d.session!=='string' || (d.type==='hello'?d.session!=='' || d.seq!==0:!/^[a-f0-9]{32}$/.test(d.session) || d.seq<1))throw new Error('握手消息无效');
+    return {marker:HANDSHAKE_MARKER,version:3,type:d.type,session:d.session,seq:d.seq,phase:d.phase};
   }
   function isAppDocument(href) {
     try { const u=new URL(href); return u.origin === 'https://aidhu.net' && (u.pathname === '/' || u.pathname.startsWith('/web/')); }
@@ -199,5 +207,5 @@
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable(content(q))));
     return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2,'0')).join('');
   }
-  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,DIAG_MARKER,DIAG_REASONS,diagnostic,isAppDocument,isQuestionURL,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
+  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,HANDSHAKE_MARKER,MAIN_PHASES,handshake,DIAG_MARKER,DIAG_REASONS,diagnostic,isAppDocument,isQuestionURL,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
 })();

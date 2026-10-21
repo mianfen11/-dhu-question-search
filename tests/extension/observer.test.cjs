@@ -16,7 +16,7 @@ function harness() {
       for (const listener of this.events.load||[]) listener();
     }
   }
-  const window={postMessage:(data,origin)=>{if(data.marker==='dhu-question-bank/v1')messages.push({data:plain(data),origin});},
+  const window={addEventListener(){},postMessage:(data,origin)=>{if(data.marker==='dhu-question-bank/v1')messages.push({data:plain(data),origin});},
     fetch:(...args)=> {
       requests.push(args);
       if (reject) return Promise.reject(new Error('network error'));
@@ -24,7 +24,7 @@ function harness() {
       Object.defineProperty(response,'url',{value:finalURL});
       return Promise.resolve(response);
     }};
-  const c=context({window,location,XMLHttpRequest:XHR}); run(c,'observer.js');
+  const c=context({window,location,XMLHttpRequest:XHR}); run(c,'main-bootstrap.js');run(c,'observer.js');
   return {c,window,location,XHR,messages,requests,set:(body,opts={})=>{nextBody=body;status=opts.status??200;finalURL=opts.finalURL??url;reject=opts.reject??false;}};
 }
 test('fetch is passive, original response readable and repeated install safe',async () => {
@@ -32,7 +32,7 @@ test('fetch is passive, original response readable and repeated install safe',as
   const response=await h.window.fetch(url);
   assert.equal((await response.json()).data[0].question,'模拟题');
   await tick();assert.equal(h.messages.length,1);assert.equal(h.requests.length,1);
-  run(h.c,'observer.js'); await h.window.fetch(url); await tick();
+  run(h.c,'main-bootstrap.js');run(h.c,'observer.js'); await h.window.fetch(url); await tick();
   assert.equal(h.messages.length,2);
 });
 test('SPA outside to practice to outside: observe only normal practice responses',async () => {

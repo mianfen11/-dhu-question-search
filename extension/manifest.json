@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "东华手册题目收集器",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "minimum_chrome_version": "111",
   "description": "仅在正常练习时保存页面已加载的题目，离线导入与导出 JSON。",
   "permissions": [
-    "storage"
+    "storage",
+    "scripting"
   ],
   "background": {
     "service_worker": "background.js"
@@ -23,6 +24,7 @@
       "js": [
         "entities.js",
         "core.js",
+        "handshake.js",
         "content.js"
       ],
       "run_at": "document_start",
@@ -34,6 +36,7 @@
         "https://aidhu.net/web/*"
       ],
       "js": [
+        "main-bootstrap.js",
         "entities.js",
         "core.js",
         "observer.js"
@@ -44,5 +47,9 @@
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"
-  }
+  },
+  "host_permissions": [
+    "https://aidhu.net/",
+    "https://aidhu.net/web/*"
+  ]
 }

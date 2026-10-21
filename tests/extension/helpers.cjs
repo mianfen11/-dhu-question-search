@@ -6,7 +6,7 @@ function run(context,file) { vm.runInContext(fs.readFileSync(path.join(root,file
 function context(extra={}) {
   const c=vm.createContext({console,URL,URLSearchParams,TextEncoder,TextDecoder,crypto:globalThis.crypto,
     Request,Response,Uint8Array,setTimeout,clearTimeout,structuredClone,...extra});
-  run(c,'entities.js'); run(c,'core.js');
+  run(c,'entities.js'); run(c,'core.js'); run(c,'handshake.js');
   return c;
 }
 const plain=value => JSON.parse(JSON.stringify(value));

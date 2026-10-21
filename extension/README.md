@@ -34,7 +34,7 @@ python3 tools/question_bank.py downloaded.json -o /tmp/normalized-bank.json
 
 ## 实现与通信边界
 
-- `manifest.json`：仅 storage 权限，MAIN 与 ISOLATED 两组 document_start 内容脚本，限定 `https://aidhu.net/` 及 `https://aidhu.net/web/*`，不申请 Cookie、webRequest、debugger、tabs、跨域请求或下载权限。`connect-src 'none'` 阻止扩展页面发起外部连接。
+- `manifest.json`：storage 与 scripting 权限，MAIN 与 ISOLATED 两组 document_start 内容脚本，限定 `https://aidhu.net/` 及 `https://aidhu.net/web/*`，不申请 Cookie、webRequest、debugger、tabs 或下载权限；host permission 仅限 aidhu.net 供 MAIN 补注入使用，不含 api.aidhu.net。`connect-src 'none'` 阻止扩展页面发起外部连接。
 - `observer.js`（MAIN）：包装原有 fetch / XHR.open。fetch 使用响应 clone 读取，不消费原响应，返回原 promise；XHR 使用 load 监听，不替换页面自己的事件处理器。不读取请求头、请求体、密码、Cookie、Authorization 或本地登录存储。不注入 Authorization，不保存完整请求 URL。
 - URL 严格限定 HTTPS、`api.aidhu.net`、精确的三种接口路径及正常 GET；拒绝用户信息 URL、重复/非法章节参数及跨来源重定向。跨消息仅保留路径、题型、manual_id、chapter_id 和已筛选的题目字段。
 - `content.js`（ISOLATED）：核对事件的 window、精确 origin、版本、路由、元数据、字段类型及大小。再做一次白名单投影，之后通过 chrome.runtime.sendMessage 发给后台。
@@ -58,7 +58,7 @@ Node 测试覆盖精确来源/路径、SPA 切换、fetch/XHR、坏响应、白�
 
 `browser.test.cjs` 是独立真实 Chromium MV3 集成测试：使用 CDP 提供虚构页面及虚构接口响应，不向真实 aidhu 接口发请求。测试包含真正内容脚本与后台、弹窗文件导入/下载、浏览器重启后的保存验证。可通过 `CHROMIUM_BIN` 指定可执行文件。Chromium 未安装或管理员明确禁止加载未打包扩展时，会显式跳过并说明原因；其他失败不会吞掉。
 
-本次云端结果：**Python 14 项通过；Node 43 项通过、1 项跳过、0 失败。** Chromium 154 明确返回 `Loading of unpacked extensions is disabled by the administrator.`，因此 **没有验证真实 MV3 安装/运行成功**，没有使用真实登录页面。
+本次云端结果：**Python 14 项通过；Node 57 项通过、1 项跳过、0 失败。** Chromium 154 明确返回 `Loading of unpacked extensions is disabled by the administrator.`，因此 **没有验证真实 MV3 安装/运行成功**，没有使用真实登录页面。
 
 需在自己的 Chrome 逐项验收：
 
@@ -85,7 +85,7 @@ Node 测试覆盖精确来源/路径、SPA 切换、fetch/XHR、坏响应、白�
 
 新增回归覆盖：登录/首页标签元数据滞后、Vue 哈希更新前启动 fetch/XHR，以及完整 observer→isolated→worker→storage 链路在章节切换中合并三种题型且不额外发请求。真实 Chrome 管理策略限制仍然存在，必须在本地验收，测试通过不代表已在用户登录会话中复现并验证。
 
-## 1.0.2 当前版本：分阶段诊断
+## 1.0.2 历史版本：分阶段诊断
 
 此前代码所有解析异常和后台失败均被静默忽略，单凭 0 无法证明故障发生在哪一层。本版修复这种静默失败，并将 Manifest、页面路由及后台来源校验统一覆盖公开应用的 `/` 和 `/web/` 两个入口。根入口原先不会注入；这属于代码可确认的覆盖缺口，但没有证据表明它就是用户当前登录会话的唯一原因。精确 API 域名仍是 `https://api.aidhu.net`，路径仍仅限三个章节题型接口，没有增加请求或接口猜测。
 
@@ -106,3 +106,41 @@ Node 测试覆盖精确来源/路径、SPA 切换、fetch/XHR、坏响应、白�
 更新：在原目录获取 main 最新代码，在 chrome://extensions 点击“重新加载”，确认 **1.0.2**，然后**手动刷新原站页面**并进入练习。无需卸载。若仍为 0，只需反馈诊断标题、原因说明及四个计数，不需要提供账号、请求头或认证信息。
 
 本版补充的测试覆盖五个阶段、监听握手/被覆盖、空或异常响应、接口参数拒绝、后台失败回执、根路径来源限制，以及敏感字段不进入诊断。云端真实 MV3 测试仍受管理员策略限制而跳过；不把模拟测试当作已验证用户浏览器能正常收集。
+
+## 1.0.3 当前版本：MAIN 启动与双向握手
+
+针对“隔离脚本存在但 MAIN 未应答”，修复了旧代码的两个可确认缺口：安装监听前就置位的布尔标记会在初始化异常后永久阻止重试；单次 probe/ready 不含轮次关联，也不能证明双向通道已经完成。不能把这些代码缺口直接当作已证明的用户浏览器根因。
+
+### 启动与握手
+
+- MAIN 静态脚本仍在 `document_start` 执行。清单顺序为 `main-bootstrap.js`、`entities.js`、`core.js`、`observer.js`。bootstrap 不依赖 core，先安装消息接收器；ISOLATED 先加载 `handshake.js` 再启动 content。不能依赖两个世界之间的先后顺序。
+- bootstrap → hello，ISOLATED → challenge，MAIN → ack，ISOLATED → confirm，MAIN → confirmed。hello/旧 ready 都不等于成功；只有本页 session、本轮 seq 对应且监听器完成安装的 confirmed 才标记 ready。消息 ID 不是认证令牌，不进入弹窗或存储。
+- 在 100/250/500/1000/1500 毫秒重试，整轮超时 2000 毫秒。先启动哪个世界、早期 hello/probe 丢失、MAIN 稍后才加载，都可通过后续握手恢复。监听器使用 capture 阶段接收，但不阻止网页原来的消息处理。
+- 安装完成后才设置版本化的 observerInstalled 状态；若安装 fetch/XHR 时抛错则回滚本次已安装的包装并报告具体失败阶段。重复注入不会叠加包装；旧版布尔标记不会阻止新版启动。
+
+### 有明确结果的补注入
+
+350 毫秒仍未确认时，隔离脚本最多请求后台补注入一次。增加 **scripting** 权限及 `aidhu.net` 的 host permission，仅用于这个启动恢复过程。没有增加 api.aidhu.net 权限，也不读取认证信息或主动请求题目。Chrome 的 host permission 在 API 层按主机授权；后台另外严格检查 aidhu 的根路径或 /web/ 路径、顶层 frame 和浏览器提供的 documentId。
+
+后台使用 `chrome.scripting.executeScript({world:'MAIN', injectImmediately:true, target:{tabId,documentIds:[原documentId]},files:[...]})`，再通过同一文档的 MAIN 状态检查返回证据。没有 DOM script 标签、内联脚本或远程脚本。原文档失效时不会改向新文档注入。补注入可能晚于首个页面请求，因此不承诺追回启动前的数据；仍需用户正常重新进入章节，不重放请求。
+
+### 弹窗能区分的 MAIN 失败
+
+- `main_bootstrap_timeout`：2 秒内没看到 bootstrap 回执，不能据此认定 CSP。
+- `main_ack_timeout`：bootstrap 已出现或 Chrome 已确认 MAIN 执行，但本轮 challenge 没有匹配 ack。
+- `main_confirm_timeout`：收到 ack，但双向确认或监听器就绪仍未完成。
+- `main_core_missing` / `main_entities_missing` / `main_observer_pending`：bootstrap 能运行，但相应依赖或监听器没完成。
+- `main_fetch_patch_failed` / `main_xhr_patch_failed`：MAIN 已运行，安装该监听函数时抛错。不会输出原异常文本。
+- `main_csp_blocked`：**只有 Chrome 补注入错误明确提及 CSP 时**才显示。
+- `main_injection_denied` / `main_document_gone` / `main_file_missing`：分别表示 Chrome 权限/策略拒绝、原文档失效、脚本文件无法加载。其他未能安全归类的错误会明确标出 Chrome 补注入失败或返回状态不符合预期，而非猜测原因。
+
+2026-10-21 对公开 `/web/` HTML 做了一次只读检查：HTTP 200，未见 CSP/CSP-Report-Only 响应头或 CSP meta。该结果不代表用户登录会话、其他扩展或浏览器策略也没有限制；未请求任何题库 API。
+
+### 更新与验收
+
+1. `git pull --ff-only` 更新原目录全部文件，勿遗漏新增的 `main-bootstrap.js` 和 `handshake.js`。
+2. 在 chrome://extensions 重新加载扩展，确认 **1.0.3**；若 Chrome 因新增 scripting/站点权限要求确认，允许扩展访问 aidhu.net。无需卸载。
+3. 手动刷新原网站，再打开弹窗。成功时显示已启动/已保存；补注入成功时会显示已恢复。失败时会显示具体 MAIN 阶段、bootstrap 是否已见、握手轮次和 2000 毫秒超时。
+4. 再正常进入章节。若失败，只反馈这些固定诊断文案，不需要提供 Cookie、Token 或请求头。
+
+回归测试覆盖 MAIN-first/ISOLATED-first、早期消息丢失、缺失 ack/confirmed、错误 session/seq、缺依赖、初始化抛错后重试、旧布尔标记、重复注入、原 documentId 定位及 CSP/权限错误脱敏。真实 MV3 测试仍因云端管理员策略禁止加载未打包扩展而跳过，未宣称在用户真实登录会话中验证成功。

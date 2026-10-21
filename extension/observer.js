@@ -1,20 +1,20 @@
 /* MAIN world: passive observation only, with allowlisted diagnostics. */
 (() => {
   'use strict';
+  const boot=globalThis.__dhuMainBridgeV3;
+  if(!boot)return;
+  if(boot.observerInstalled){boot.announce();return;}
   const C=globalThis.DhuBankCore;
-  if(!C || globalThis.__dhuObserverInstalled)return;
-  globalThis.__dhuObserverInstalled=true;
+  if(!C){boot.fail('core_missing');return;}
+  let originalFetch,originalOpen,hookedFetch=null,hookedOpen=null,step='observer';
+  try {
   const MAX_BYTES=5*1024*1024, post=window.postMessage.bind(window);
   const current=()=>C.isPracticePage(location.href);
-  let hookedFetch=null,hookedOpen=null;
+
   const hooksReplaced=()=>Boolean((hookedFetch && window.fetch!==hookedFetch) || (hookedOpen && XMLHttpRequest.prototype.open!==hookedOpen));
   const diagnose=(event,reason,count=0)=>{
     try {post({marker:C.DIAG_MARKER,version:1,event,reason,count},'https://aidhu.net');} catch { /* Never affect page. */ }
   };
-  window.addEventListener?.('message',event=>{
-    if(event.source!==window || event.origin!=='https://aidhu.net' || !C.isAppDocument(location.href))return;
-    try {if(C.diagnostic(event.data).event==='probe')diagnose('ready',hooksReplaced()?'hook_replaced':'ready');} catch { /* Not a diagnostic probe. */ }
-  });
   function metadata(input,init) {
     try {
       // Never read headers, credentials, cookies or the request body.
@@ -71,7 +71,7 @@
     if(!finalMeta || C.stable(finalMeta)!==C.stable(meta)){diagnose('parse_error','redirect');return false;}
     return true;
   }
-  const originalFetch=window.fetch;
+  step='fetch';originalFetch=window.fetch;
   if(typeof originalFetch==='function')window.fetch=function(input,init) {
     const meta=metadata(input,init),promise=Reflect.apply(originalFetch,this,arguments);
     if(meta)void promise.then(async response=>{
@@ -82,8 +82,9 @@
     return promise;
   };
   if(typeof originalFetch==='function')hookedFetch=window.fetch;
+  step='xhr';
   if(typeof XMLHttpRequest!=='undefined') {
-    const states=new WeakMap(),open=XMLHttpRequest.prototype.open;
+    const states=new WeakMap(),open=XMLHttpRequest.prototype.open;originalOpen=open;
     XMLHttpRequest.prototype.open=function(method,url) {
       const meta=metadata(typeof url==='string' || url instanceof URL?String(url):'',{method});
       const result=Reflect.apply(open,this,arguments);
@@ -104,5 +105,10 @@
     };
     hookedOpen=XMLHttpRequest.prototype.open;
   }
-  diagnose('ready','ready');
+  boot.failure=null;boot.observerInstalled=true;boot.health=hooksReplaced;boot.announce();
+  } catch {
+    try {if(hookedFetch && window.fetch===hookedFetch)window.fetch=originalFetch;}catch{}
+    try {if(hookedOpen && XMLHttpRequest.prototype.open===hookedOpen)XMLHttpRequest.prototype.open=originalOpen;}catch{}
+    boot.fail(step==='fetch'?'fetch_patch_failed':step==='xhr'?'xhr_patch_failed':'observer_init_failed');
+  }
 })();

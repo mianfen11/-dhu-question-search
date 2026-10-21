@@ -6,7 +6,7 @@ const popupSender={id:'test-extension',url:'chrome-extension://test-extension/po
 function bridge({reply,ready=false,href=page}={}) {
   const listeners=[],sent=[];let receiver;
   const window={addEventListener:(name,fn)=>listeners.push(fn),postMessage:data=>{
-    if(ready && data.event==='probe')queueMicrotask(()=>emit(diag('ready','ready')));
+    if(ready && ['challenge','confirm'].includes(data.type))queueMicrotask(()=>emit({...plain(data),type:data.type==='challenge'?'ack':'confirmed',phase:'installed'}));
   }};
   const chrome={runtime:{id:popupSender.id,getURL:()=>popupSender.url,onMessage:{addListener:fn=>receiver=fn},
     sendMessage:async message=>{sent.push(plain(message));return reply?reply(message):{ok:true,result:{added:1,duplicates:0,rejected:0}};}}};
@@ -76,10 +76,10 @@ test('MAIN observer implementation reports fetch/XHR parse errors and supports s
   const window={postMessage:data=>posts.push(plain(data)),addEventListener:(name,fn)=>listeners.push(fn),fetch:()=>{
     const response=new Response(payload);Object.defineProperty(response,'url',{value:target});return Promise.resolve(response);
   }};
-  const c=context({window,location,XMLHttpRequest:XHR});run(c,'observer.js');
-  assert.equal(posts[0].event,'ready');
-  listeners[0]({source:window,origin:'https://aidhu.net',data:{marker:c.DhuBankCore.DIAG_MARKER,version:1,event:'probe',reason:'none',count:0}});
-  assert.equal(posts.at(-1).event,'ready');
+  const c=context({window,location,XMLHttpRequest:XHR});run(c,'main-bootstrap.js');run(c,'observer.js');
+  assert.equal(posts[0].type,'hello');
+  listeners[0]({source:window,origin:'https://aidhu.net',data:{marker:c.DhuBankCore.HANDSHAKE_MARKER,version:3,type:'challenge',phase:'booting',session:'a'.repeat(32),seq:1}});
+  assert.equal(posts.at(-1).type,'ack');
   await window.fetch(url);await tick();assert.equal(posts.at(-1).reason,'json');
   payload=JSON.stringify({code:200,data:{not:'array'}});await window.fetch(url);await tick();assert.equal(posts.at(-1).reason,'shape');
   payload=JSON.stringify({code:200,data:[{question:'missing fields',source:{token:'never-forward'}}]});
@@ -104,10 +104,10 @@ test('root and /web entry points are accepted without accepting other sites or p
 
 test('MAIN handshake detects a page replacing the installed fetch wrapper',()=>{
   const posts=[],listeners=[],window={fetch:()=>Promise.resolve(),postMessage:d=>posts.push(plain(d)),addEventListener:(name,fn)=>listeners.push(fn)};
-  const c=context({window,location:{href:page}});run(c,'observer.js');
+  const c=context({window,location:{href:page}});run(c,'main-bootstrap.js');run(c,'observer.js');
   window.fetch=()=>Promise.resolve();
-  listeners[0]({source:window,origin:'https://aidhu.net',data:{marker:c.DhuBankCore.DIAG_MARKER,version:1,event:'probe',reason:'none',count:0}});
-  assert.equal(posts.at(-1).reason,'hook_replaced');
+  listeners[0]({source:window,origin:'https://aidhu.net',data:{marker:c.DhuBankCore.HANDSHAKE_MARKER,version:3,type:'challenge',phase:'booting',session:'a'.repeat(32),seq:1}});
+  assert.equal(posts.at(-1).phase,'hook_replaced');
 });
 test('ok without an explicit row-write acknowledgment does not claim successful saving',async()=>{
   const h=bridge({ready:true,reply:()=>({ok:true})});h.emit(h.data());await tick();
