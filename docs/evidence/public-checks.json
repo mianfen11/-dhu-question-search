@@ -1,0 +1,24 @@
+[
+  {
+    "url": "https://aidhu.net/web/",
+    "status": 200,
+    "bytes": 726,
+    "sha256": "9566f497b2922f300f91af2550aa6e79a8a839fb417bba2612ea3d76cc1f6879"
+  },
+  {
+    "url": "https://aidhu.net/sitemap.xml",
+    "status": 404
+  },
+  {
+    "url": "https://aidhu.net/web/static/js/chunk-vendors.2eba9b6c.js",
+    "status": 200,
+    "bytes": 3728641,
+    "sha256": "5d01afdb5e0d70babe6e8ea04c66a2b2e8c260e019240d32128428d661964a32"
+  },
+  {
+    "url": "https://aidhu.net/web/static/css/app.db45d697.css",
+    "status": 200,
+    "bytes": 161845,
+    "sha256": "6276b3228375084654106b0d93a37815c18a2cfdb84e16de033be34b79a4bfd1"
+  }
+]

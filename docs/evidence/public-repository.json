@@ -1,0 +1,11 @@
+{
+  "search_url": "https://github.com/search?q=%E4%B8%9C%E5%8D%8E+%E5%AD%A6%E7%94%9F%E6%89%8B%E5%86%8C&type=repositories",
+  "status": 200,
+  "result_count": 1,
+  "repositories": [
+    "codesimp1e/dhuhandbooktest"
+  ],
+  "inspected_commit": "7ea1af33166c11d44e1a11ca0d5814d3e9bb9c9b",
+  "notebook_output_count": 0,
+  "note": "Only safe public repository metadata retained; search-page transient form fields omitted."
+}
