@@ -3,10 +3,10 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {context,run,plain,row,page,url,root}=require('./helpers.cjs');
 const popupURL='chrome-extension://test-extension/popup.html';
-function worker() {
+function worker(options={}) {
   const data={};let listener,access;
   const chrome={runtime:{id:'test-extension',getURL:()=>popupURL,onMessage:{addListener:fn=>listener=fn}},
-    storage:{local:{setAccessLevel:async x=>{access=x.accessLevel;},get:async key=>({[key]:structuredClone(data[key])}),
+    storage:{local:{setAccessLevel:async x=>{access=x.accessLevel;if(options.failAccess)throw new Error('private-access-error');},get:async key=>{if(options.failRead)throw new Error('private-read-error');return {[key]:structuredClone(data[key])};},
       set:async value=>{await new Promise(r=>setTimeout(r,2));Object.assign(data,structuredClone(plain(value)));}}}};
   const c=context({chrome});c.importScripts=(...files)=>files.forEach(file=>run(c,file));run(c,'background.js');
   const send=(message,sender={id:'test-extension',url:popupURL})=>new Promise(resolve=>{assert.equal(listener(message,sender,resolve),true);});
@@ -56,7 +56,7 @@ test('manifest grants storage only, limits scripts to target site, excludes exte
   assert.equal(m.content_scripts[1].world,'MAIN');
   assert.equal(m.manifest_version,3);assert.deepEqual(m.permissions,['storage']);
   assert.equal(m.host_permissions,undefined);assert.equal(m.externally_connectable,undefined);
-  assert.ok(m.content_scripts.every(s=>s.run_at==='document_start'&&s.matches.length===1&&s.matches[0]==='https://aidhu.net/web/*'&&!s.all_frames));
+  assert.ok(m.content_scripts.every(s=>s.run_at==='document_start'&&s.matches.length===2&&s.matches[0]==='https://aidhu.net/'&&s.matches[1]==='https://aidhu.net/web/*'&&!s.all_frames));
   assert.match(m.content_security_policy.extension_pages,/connect-src 'none'/);
 });
 test('worker authenticates the document and live bridge route instead of the tab route snapshot',async () => {
@@ -139,4 +139,17 @@ test('full observer-to-storage chain saves all async types across Vue chapter ch
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal((await w.send({kind:'stats'})).stats.total,6);
   assert.equal(requests,8,'collector must not make any extra requests');
+});
+
+test('worker diagnoses access/read/write failure and accepts the app root without weakening sender checks',async()=>{
+  for(const [options,reason] of [[{failAccess:true},'storage_access'],[{failRead:true},'storage_read']]) {
+    const w=worker(options);
+    const r=await w.send({kind:'collect',pageHref:page,payload:w.payload},w.siteSender);
+    assert.equal(r.ok,false);assert.equal(r.stage,'storage_error');assert.equal(r.reason,reason);
+    assert.equal(JSON.stringify(r).includes('private-'),false);
+  }
+  const w=worker();
+  const r=await w.send({kind:'collect',pageHref:page.replace('/web/','/'),payload:w.payload},
+    {...w.siteSender,url:'https://aidhu.net/'});
+  assert.equal(r.ok,true);assert.equal(r.stats.total,1);
 });

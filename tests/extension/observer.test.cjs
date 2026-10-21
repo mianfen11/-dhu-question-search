@@ -16,7 +16,7 @@ function harness() {
       for (const listener of this.events.load||[]) listener();
     }
   }
-  const window={postMessage:(data,origin)=>messages.push({data:plain(data),origin}),
+  const window={postMessage:(data,origin)=>{if(data.marker==='dhu-question-bank/v1')messages.push({data:plain(data),origin});},
     fetch:(...args)=> {
       requests.push(args);
       if (reject) return Promise.reject(new Error('network error'));

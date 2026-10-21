@@ -11,10 +11,26 @@
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const object = o => o !== null && typeof o === 'object' && !Array.isArray(o);
   const first = (o, ...keys) => { for (const k of keys) if (own(o,k) && o[k] != null) return o[k]; return null; };
+  const DIAG_MARKER = 'dhu-question-bank/diagnostic-v1';
+  const DIAG_REASONS = Object.freeze(['none','ready','response_pending','json','shape','size','row_schema','endpoint_context','http_status','redirect','network','unsupported_xhr','bridge_rejected','queue_full','saving','normalization','storage_access','storage_read','storage_write','background_unreachable','saved','empty','observer_missing','bridge_missing','diagnostic_invalid','hook_replaced']);
+  function diagnostic(value) {
+    if (!object(value) || Object.keys(value).sort().join(',') !== 'count,event,marker,reason,version' ||
+        value.marker !== DIAG_MARKER || value.version !== 1 || !['probe','ready','captured','parse_error'].includes(value.event) ||
+        !DIAG_REASONS.includes(value.reason) || !Number.isSafeInteger(value.count) || value.count < 0 || value.count > 10000) throw new Error('诊断消息无效');
+    return {marker:DIAG_MARKER,version:1,event:value.event,reason:value.reason,count:value.count};
+  }
+  function isAppDocument(href) {
+    try { const u=new URL(href); return u.origin === 'https://aidhu.net' && (u.pathname === '/' || u.pathname.startsWith('/web/')); }
+    catch { return false; }
+  }
+  function isQuestionURL(url,base) {
+    try { const u=new URL(url,base); return u.origin==='https://api.aidhu.net' && !u.username && !u.password && !u.hash && TYPES.some(t=>u.pathname===PREFIX+t); }
+    catch { return false; }
+  }
   function isPracticePage(href) {
     try {
       const u = new URL(href);
-      if (u.origin !== 'https://aidhu.net' || !u.pathname.startsWith('/web/')) return false;
+      if (!isAppDocument(href)) return false;
       const [route, query = ''] = u.hash.slice(1).split('?');
       const p = new URLSearchParams(query);
       return route === '/main/handbookAnswer' && (!p.has('mode') || p.get('mode') === 'practice');
@@ -183,5 +199,5 @@
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable(content(q))));
     return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2,'0')).join('');
   }
-  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
+  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,DIAG_MARKER,DIAG_REASONS,diagnostic,isAppDocument,isQuestionURL,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
 })();
