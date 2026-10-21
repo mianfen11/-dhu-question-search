@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="东华大学学生手册题目关键词检索。按选项文字核对答案，非官方辅助工具。">
+  <meta name="theme-color" content="#f5f5f3">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; worker-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>题目检索 · 东华大学学生手册</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <main id="main" class="page">
+    <header class="page-header">
+      <div><p class="eyebrow">东华大学学生手册</p><h1>题目检索</h1></div>
+      <button id="help" class="text-button" type="button" aria-haspopup="dialog">使用说明</button>
+    </header>
+    <section aria-label="关键词检索" class="search-section">
+      <label class="visually-hidden" for="query">输入题目中的几个关键词</label>
+      <div class="search-field">
+        <svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <input id="query" type="search" placeholder="输入题目中的几个关键词" autocomplete="off" spellcheck="false" maxlength="200" aria-controls="results" aria-describedby="bank-count" disabled>
+        <button id="clear" class="clear-button" type="button" aria-label="清空关键词" hidden>×</button>
+      </div>
+      <div class="search-meta"><p id="bank-count" role="status">正在读取题库…</p><p>按题干与选项文字检索</p></div>
+    </section>
+    <section id="search-area" aria-label="搜索结果" aria-busy="true">
+      <div id="result-heading" class="result-heading" hidden><h2>检索结果</h2><p id="result-count" role="status" aria-live="polite"></p></div>
+      <div id="empty" class="empty-state"><h2 id="empty-title">正在读取题库</h2><p id="empty-description">请稍候。</p><button id="retry" class="text-button" type="button" hidden>重新加载</button></div>
+      <div id="results"></div>
+      <button id="more" class="more-button" type="button" hidden>显示更多</button>
+    </section>
+    <footer>非官方辅助工具 · 请以学校正式规定为准</footer>
+    <noscript><p>请启用 JavaScript 以使用本地题目检索。</p></noscript>
+  </main>
+  <dialog id="notice" aria-labelledby="notice-title" aria-describedby="notice-intro">
+    <div class="notice-header"><p class="eyebrow">开始之前</p><h2 id="notice-title" tabindex="-1">使用须知</h2><p id="notice-intro">几项简短说明，帮助你准确使用检索结果。</p></div>
+    <div class="notice-body">
+      <section><h3><span aria-hidden="true">①</span> 关键词检索</h3><p>无需输入完整题目，输入题目中的几个关键词即可搜索。</p></section>
+      <section><h3><span aria-hidden="true">②</span> 答案核对</h3><p>请以正确选项的文字内容为准，不要仅依据 A、B、C、D 等选项字母。</p></section>
+      <section><h3><span aria-hidden="true">③</span> 题库范围</h3><p>本站仅收录已整理的题目，未搜索到结果不代表题目不存在。</p></section>
+      <section><h3><span aria-hidden="true">④</span> 免责声明</h3><p>本站为非官方辅助工具，内容可能存在遗漏或错误，请以学校正式规定为准。</p></section>
+    </div>
+    <div class="notice-actions"><label class="remember"><input id="remember" type="checkbox">不再提示</label><button id="understand" class="primary-button" type="button">我已了解，开始使用</button></div>
+  </dialog>
+</body>
+</html>

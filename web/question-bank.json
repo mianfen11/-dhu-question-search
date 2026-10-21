@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "format": "dhu-search-v1",
+  "questions": [],
+  "report": {
+    "input_records": 0,
+    "unique_questions": 0,
+    "mapped_answer_records": 0,
+    "conflict_questions": 0,
+    "unverified_questions": 0
+  }
+}
