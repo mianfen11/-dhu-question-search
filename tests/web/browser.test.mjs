@@ -79,7 +79,7 @@ test('real Chromium static site: data, search, modal, pagination, mobile and sub
     await t.test('Chinese search maps full answer, highlights text and preserves reordered versions', async () => {
       await query('因病 期末考试');
       assert.equal(await ev("document.querySelectorAll('.result').length"), 1);
-      assert.equal(await ev("document.querySelector('.answer-list').textContent"), '办理缓考手续');
+      assert.equal(await ev("document.querySelector('.answer-list .answer-text').textContent"), '办理缓考手续');
       assert.ok(await ev("document.querySelectorAll('.result mark').length") >= 2);
       await ev("document.querySelector('summary').click()"); await waitFor(() => ev("document.querySelectorAll('.variant').length===2"), 'lazy versions');
       assert.equal(await ev("document.querySelector('.result').textContent.includes('本版本答案：A') && document.querySelector('.result').textContent.includes('本版本答案：B')"), true);
@@ -94,7 +94,49 @@ test('real Chromium static site: data, search, modal, pagination, mobile and sub
       await query('学籍证明'); assert.equal(await ev("document.querySelector('.result').dataset.status"), 'unverified');
       assert.equal(await ev("document.querySelectorAll('.result .answer-list').length"), 0);
       await query('考试纪律'); assert.equal(await ev("document.querySelector('.answer-list').textContent"), '错误');
-      await query('奖学金 材料'); assert.deepEqual(await ev("[...document.querySelectorAll('.answer-list li')].map(n=>n.textContent)"), ['成绩单','申请表']);
+      await query('奖学金 材料'); assert.deepEqual(await ev("[...document.querySelectorAll('.answer-list .answer-text')].map(n=>n.textContent)"), ['成绩单','申请表']);
+    });
+    await t.test('verified answer panel uses one saved version for both letters and full text', async () => {
+      await query('因病 期末考试');
+      const variant=fixture.questions.find(q=>q.question.includes('因病')).variants[0];
+      assert.equal(await ev("document.querySelector('.answer-panel .answer-label').textContent"),'正确答案：'+variant.answer_labels.join('、'));
+      assert.deepEqual(await ev("[...document.querySelectorAll('.answer-panel .answer-letter')].map(n=>n.textContent)"),variant.answer_labels.map(l=>l+'.'));
+      assert.deepEqual(await ev("[...document.querySelectorAll('.answer-panel .answer-text')].map(n=>n.textContent)"),variant.answer_labels.map(l=>variant.options[l]));
+      assert.equal(await ev("document.querySelector('.type-tag').classList.contains('type-one_choice')"),true);
+      assert.ok(await ev("parseInt(getComputedStyle(document.querySelector('.answer-panel .answer-list')).fontWeight)")>=600);
+      assert.equal(await ev("getComputedStyle(document.querySelector('.answer-panel')).backgroundColor"),'rgb(232, 241, 233)');
+      await query('缓考 条件'); assert.equal(await ev("document.querySelector('.answer-panel')===null"),true);
+      assert.equal(await ev("!!document.querySelector('.warning-panel')"),true);
+      await query('学籍证明'); assert.equal(await ev("document.querySelector('.answer-panel')===null"),true);
+      await query('奖学金 材料'); assert.equal(await ev("document.querySelectorAll('.answer-panel li').length"),2);
+      assert.equal(await ev("document.querySelector('.type-tag').classList.contains('type-multi_choice')"),true);
+      await query('考试纪律'); assert.equal(await ev("document.querySelector('.answer-panel .answer-list').textContent"),'错误');
+      assert.equal(await ev("document.querySelectorAll('.answer-letter').length"),0);
+      assert.equal(await ev("document.querySelector('.type-tag').classList.contains('type-judge')"),true);
+    });
+    await t.test('native multiline paste auto-searches and keeps textarea height bounded', async () => {
+      await ev("document.querySelector('#query').value='';document.querySelector('#query').focus()");
+      await browser.call('Input.insertText',{text:'12.【单选题】\n学生因病无法参加期末考试，\n应办理什么手续？\nA. 这是复制时的选项，不作为答案依据\nB. 不同文字'});
+      await waitFor(()=>ev("document.querySelector('.answer-panel .answer-text')?.textContent==='办理缓考手续'"),'native pasted stem');
+      assert.equal(await ev("document.querySelector('#query').tagName"),'TEXTAREA');
+      assert.equal(await ev("document.querySelector('#query').placeholder"),'粘贴题目，或输入几个关键词');
+      assert.equal(await ev("document.querySelector('#query').value.includes('\\n')"),true);
+      assert.ok(await ev("document.querySelector('#query').getBoundingClientRect().height")<=144);
+      assert.ok(await ev("document.querySelectorAll('.result mark').length")>0);
+    });
+    await t.test('filters retain query, combine with ranking, reset pagination, and resist stale worker replies', async () => {
+      await query('学生');const text=await ev("document.querySelector('#query').value");
+      for(const type of ['one_choice','multi_choice','judge']) {
+        await ev(`document.querySelector('[data-type="${type}"]').click()`);
+        await waitFor(()=>ev(`document.querySelector('#search-area').getAttribute('aria-busy')==='false' && document.querySelector('[data-type="${type}"]').getAttribute('aria-pressed')==='true' && [...document.querySelectorAll('.result .type-tag')].every(n=>n.classList.contains('type-${type}'))`),'type filter '+type);
+        await delay(140);
+        assert.equal(await ev("document.querySelector('#query').value"),text);
+        assert.ok(await ev("document.querySelectorAll('.result').length")>0);
+      }
+      await ev("document.querySelector('[data-type=one_choice]').click();document.querySelector('[data-type=judge]').click();document.querySelector('[data-type=multi_choice]').click()");
+      await delay(220);assert.equal(await ev("[...document.querySelectorAll('.result .type-tag')].every(n=>n.classList.contains('type-multi_choice'))"),true);
+      await ev("document.querySelector('[data-type=all]').click()");await delay(200);
+      assert.equal(await ev("document.querySelector('#query').value"),text);
     });
     await t.test('untrusted text remains plain text without creating HTML', async () => {
       await query('信息安全');
@@ -135,6 +177,8 @@ test('real Chromium static site: data, search, modal, pagination, mobile and sub
       await query('因病 期末考试');
       assert.equal(await ev('document.documentElement.scrollWidth <= window.innerWidth'), true);
       assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('#query')).fontSize)") >= 16);
+      assert.equal(await ev("[...document.querySelectorAll('.type-filters button')].every(b=>b.getBoundingClientRect().height>=44)"),true);
+      assert.equal(await ev("!!document.querySelector('.answer-panel')"),true);
       await screenshot('dhu-search-mobile.png');
       await browser.call('Emulation.setDeviceMetricsOverride', { width: 320, height: 480, deviceScaleFactor: 1, mobile: true });
       await ev("document.querySelector('#help').click()");

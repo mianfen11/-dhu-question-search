@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { buildIndex, search, normalize, termsFor, highlightRanges } from '../../web/search.js';
+import { buildIndex, search, normalize, prepareQuery, filterResults, termsFor, highlightRanges } from '../../web/search.js';
 import { validateBank } from '../../web/bank.js';
 export function buildBank(rows) {
   const py = spawnSync('python3', ['-c', 'import json,sys;from tools.build_search_bank import build_documents;print(json.dumps(build_documents([("synthetic-fixture-not-for-publication.json",json.load(sys.stdin))]),ensure_ascii=False))'], { input: JSON.stringify(rows), encoding: 'utf8' });
@@ -72,4 +72,45 @@ test('large index stays local, complete, and fast without creating result DOM', 
   const start = performance.now(), large = buildIndex(many), found = search(large, '期末 考试');
   assert.equal(found.length, 12000);
   assert.ok(performance.now() - start < 5000, 'bounded 12k-record index/search smoke check');
+});
+
+test('full pasted stem with question number and type label ranks exact text first', () => {
+  const full = questions.find(q => q.question.includes('因病'));
+  for (const prefix of ['12. 【单选题】', '第12题：单选题：', '（十二）[单选题]', '单项选择题 12、']) {
+    assert.equal(search(index, prefix + full.question)[0].id, full.id);
+  }
+});
+test('multiline paste ignores layout, copied choices and answer annotations', () => {
+  const full = questions.find(q => q.question.includes('因病'));
+  const pasted = '【单选题】\n13、学生因病无法参加期末\n考试，应按照学校规定办理什么手续？\nA. 与数据库不同顺序的选项\nB. 用户复制的其他内容\n正确答案：B';
+  assert.equal(search(index, pasted)[0].id, full.id);
+  assert.ok(!prepareQuery(pasted).includes('不同顺序'));
+  assert.ok(!prepareQuery(pasted).includes('正确答案'));
+});
+test('query cleaning preserves meaningful decimal values, years, and numbers in the stem', () => {
+  assert.equal(prepareQuery('1.5学分对应多少课时？'), '1.5学分对应多少课时?');
+  assert.equal(prepareQuery('2026年有关规定是什么？'), '2026年有关规定是什么?');
+  assert.equal(prepareQuery('12、学生修读1.5学分有什么要求？'), '学生修读1.5学分有什么要求?');
+});
+test('long complete stems are not truncated at 200 characters and exact beats similar', () => {
+  const text = '学生管理相关规定与办理流程。'.repeat(30) + '最后一个关键区别是应当提前申请。';
+  const b = buildBank([row({ question: text }), row({ question: text.replace('提前申请', '无需申请') })]);
+  const longIndex = buildIndex(b.questions), expected = b.questions.find(q => q.question === text);
+  assert.equal(search(longIndex, '1、【单选题】' + text)[0].id, expected.id);
+  assert.equal(prepareQuery(text).length > 200, true);
+});
+test('whole-stem high similarity tolerates a copying typo without replacing keywords', () => {
+  const b = buildBank([row()]);
+  assert.equal(search(buildIndex(b.questions), row().question.replace('按照', '按昭'))[0].id, b.questions[0].id);
+  assert.equal(search(buildIndex(b.questions), '因病 期末考试')[0].id, b.questions[0].id);
+});
+test('type filters preserve relevance order and support all three types', () => {
+  const b = buildBank([row(), row({ question_type:'multi_choice',answer:'AB' }), { question_type:'judge',question:'因病无法参加考试时应申请缓考。',answer:1 }]);
+  const idx = buildIndex(b.questions), byId = new Map(b.questions.map(q => [q.id,q])), all = search(idx,'因病');
+  assert.equal(all.length,3);
+  for (const type of ['one_choice','multi_choice','judge']) {
+    assert.deepEqual(search(idx,'因病',type), filterResults(all,type,byId));
+    assert.equal(search(idx,'因病',type).length,1);
+  }
+  assert.deepEqual(search(idx,'因病','invalid'),[]);
 });
