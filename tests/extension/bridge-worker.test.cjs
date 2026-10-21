@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const {context,run,plain,row,page,url,root}=require('./helpers.cjs');
 const popupURL='chrome-extension://test-extension/popup.html';
 function worker(options={}) {
-  const data={};let listener,access;
+  const data=options.data||{};let listener,access;
   const chrome={runtime:{id:'test-extension',getURL:()=>popupURL,onMessage:{addListener:fn=>listener=fn}},
     scripting:options.scripting || {executeScript:async()=>{throw new Error('missing host permission');}},
     storage:{local:{setAccessLevel:async x=>{access=x.accessLevel;if(options.failAccess)throw new Error('private-access-error');},get:async key=>{if(options.failRead)throw new Error('private-read-error');return {[key]:structuredClone(data[key])};},
@@ -178,4 +178,31 @@ test('Chrome MAIN injection errors are categorized without forwarding raw URLs o
     const r=await w.send({kind:'ensure_main'},{...w.siteSender,documentId:'doc'});
     assert.equal(r.reason,reason);assert.equal(JSON.stringify(r).includes('secret-token'),false);
   }
+});
+
+test('offline queue persists across workers, counts responses atomically and refuses page controls/automatic requests',async()=>{
+  const w=worker(), marker=w.c.DhuBankCore.QUEUE_MARKER;
+  const event=payload=>w.send({kind:'platform_event',payload},w.siteSender);
+  assert.equal((await event({marker,version:1,event:'chapters',manual_id:'1',chapters:[{chapter_id:'1',name:'第一章'}]})).ok,true);
+  assert.equal((await w.send({kind:'queue_control',action:'start',manual_id:'1',rounds:2},w.siteSender)).ok,false);
+  assert.equal((await w.send({kind:'auto_start'})).ok,false);
+  assert.equal((await w.send({kind:'queue_control',action:'start',manual_id:'1',rounds:2})).stats.queue.progress.total,6);
+  const capture={response_id:crypto.randomUUID(),batch_index:0,batch_count:1,rejected_rows:0};
+  const collect={kind:'collect',pageHref:page,payload:{...w.payload,capture}};
+  assert.equal((await w.send(collect,w.siteSender)).stats.queue.progress.observed,1);
+  const repeat=await w.send(collect,w.siteSender);
+  assert.equal(repeat.stats.total,1);assert.equal(repeat.stats.queue.progress.observed,1);
+  assert.equal(repeat.stats.queue.progress.duplicates,0);
+  const restarted=worker({data:w.data});
+  assert.equal((await restarted.send({kind:'stats'})).stats.queue.progress.observed,1);
+  await restarted.send({kind:'queue_control',action:'pause'});
+  assert.equal((await restarted.send({kind:'stats'})).stats.queue.status,'paused');
+  await restarted.send({kind:'queue_control',action:'resume'});
+  const paused=await restarted.send({kind:'platform_event',payload:{marker,version:1,event:'blocked',status:429}},restarted.siteSender);
+  assert.equal(paused.stats.queue.pause_reason,'http_429');
+  const before=JSON.stringify(w.data);
+  restarted.c.chrome.storage.local.set=async()=>{throw new Error('quota');};
+  assert.equal((await restarted.send({kind:'queue_control',action:'resume'})).ok,false);
+  assert.equal(JSON.stringify(w.data),before);
+  assert.equal((await restarted.send({kind:'export'})).bank.questions.length,1);
 });

@@ -1,6 +1,6 @@
 'use strict';
-importScripts('entities.js','core.js','store.js');
-const C=globalThis.DhuBankCore, S=globalThis.DhuBankStore;
+importScripts('entities.js','core.js','store.js','queue.js');
+const C=globalThis.DhuBankCore, S=globalThis.DhuBankStore, Q=globalThis.DhuQueue;
 // Only extension contexts may directly access storage, never content scripts.
 const storageReady=Promise.resolve().then(()=>chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'})).then(()=>true,()=>false);
 let tail=Promise.resolve();
@@ -41,19 +41,31 @@ async function handle(message,sender) {
     if(Object.keys(message).join(',')!=='kind' || !sender.tab || sender.frameId!==0 || !validSite(sender.url))throw new Error('注入来源无效');
     return ensureMain(sender);
   }
-  let rows;
+  let rows,safeCapture=null,meta=null,platformEvent=null;
   if (message.kind==='collect') {
     // sender.tab.url is tab metadata, not a reliable Vue hash-route clock.
     // Authenticate the sending document; the isolated bridge validates its live href.
     if (!sender.tab || sender.frameId!==0 || !validSite(sender.url) || !C.isPracticePage(message.pageHref)) throw new Error('收集来源无效');
-    try { rows=C.bridgeMessage(message.payload,message.pageHref).questions; }
+    try { const safe=C.bridgeMessage(message.payload,message.pageHref);rows=safe.questions;safeCapture=safe.capture||null;meta=safe.meta; }
     catch { return {ok:false,stage:'parse_error',reason:'bridge_rejected',error:'题目消息未通过校验'}; }
+  } else if(message.kind==='platform_event') {
+    if(!sender.tab || sender.frameId!==0 || !validSite(sender.url))throw new Error('平台观测来源无效');
+    platformEvent=C.queueMessage(message.payload);
   } else if (!isPopup) throw new Error('仅弹窗可操作本地题库');
   if(!await storageReady)return {ok:false,stage:'storage_error',reason:'storage_access',error:'无法初始化扩展本地存储权限'};
   let state;
   try { state=await S.load(chrome.storage.local); }
   catch { return {ok:false,stage:'storage_error',reason:'storage_read',error:'读取本地题库失败，原数据未改动'}; }
-  if (message.kind==='stats') return {ok:true,stats:S.summary(state)};
+  if (message.kind==='stats') return {ok:true,stats:{...S.summary(state),queue:Q.summary(state)}};
+  if(message.kind==='auto_start')return {ok:false,error:'平台自动化许可和访问频率尚未明确，自动请求未启用；仅支持离线记录队列'};
+  if(message.kind==='queue_control' || platformEvent) {
+    const queue=platformEvent?(platformEvent.event==='chapters'?Q.catalog(Q.read(state),platformEvent):platformEvent.event==='empty'?Q.observe(Q.read(state),platformEvent.meta,platformEvent.capture,{added:0,duplicates:0,rejected:0}):Q.blocked(Q.read(state),platformEvent.status)):
+      Q.control(Q.read(state),message.action,{manual_id:message.manual_id,rounds:message.rounds});
+    const next={...state,queue};
+    try {await chrome.storage.local.set({[S.KEY]:next});}
+    catch {return {ok:false,error:'离线队列保存失败，原数据未覆盖'};}
+    return {ok:true,stats:{...S.summary(next),queue:Q.summary(next)}};
+  }
   if (message.kind==='export') return {ok:true,bank:S.exportBank(state)};
   if (message.kind==='import') {
     if (typeof message.json !== 'string' || message.json.length > 20*1024*1024) throw new Error('导入文件过大（最多 20 MB）');
@@ -61,9 +73,10 @@ async function handle(message,sender) {
   }
   if (!rows) throw new Error('未知操作');
   const merged=await S.merge(state,rows);
+  if(message.kind==='collect')merged.state.queue=Q.observe(Q.read(state),meta,safeCapture,merged.result);
   try { await chrome.storage.local.set({[S.KEY]:merged.state}); }
   catch { return {ok:false,stage:'storage_error',reason:'storage_write',error:'本地保存失败，可能超出 Chrome 存储配额；原题库未覆盖'}; }
-  return {ok:true,result:merged.result,stats:S.summary(merged.state)};
+  return {ok:true,result:merged.result,stats:{...S.summary(merged.state),queue:Q.summary(merged.state)}};
 }
 chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   // Returning true keeps the channel/worker alive until the serialized operation completes.

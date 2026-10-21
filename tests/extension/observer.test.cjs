@@ -76,6 +76,9 @@ test('bad rows skipped individually and large batches are safely split',async ()
   const h=harness();h.set({code:200,data:[row({question:null}),...Array.from({length:205},(_,i)=>row({question:String(i)}))]});
   await h.window.fetch(url);await tick();
   assert.deepEqual(h.messages.map(m=>m.data.questions.length),[100,100,5]);
+  assert.equal(new Set(h.messages.map(m=>m.data.capture.response_id)).size,1);
+  assert.deepEqual(h.messages.map(m=>m.data.capture.batch_index),[0,1,2]);
+  assert.ok(h.messages.every(m=>m.data.capture.batch_count===3 && m.data.capture.rejected_rows===1));
 });
 test('fetch started during SPA navigation is collected after practice hash becomes current',async () => {
   const h=harness();h.location.href='https://aidhu.net/web/#/main/handbookList';

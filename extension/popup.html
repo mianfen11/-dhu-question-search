@@ -12,6 +12,16 @@
     <div><dt>待核对冲突</dt><dd id="conflicts">—</dd></div>
   </dl>
   <section aria-label="当前标签页诊断"><strong id="diagnostic-status" role="status">正在检查监听状态…</strong><p id="diagnostic-detail"></p></section>
+  <section class="queue" aria-label="离线收集计划">
+    <h2>自动收集计划</h2>
+    <p id="queue-permission">平台自动化许可和频率未确认。自动访问未启用，下方仅记录用户正常练习，不自动请求或切换页面。</p>
+    <button id="auto-start" type="button" disabled>自动收集（待平台授权）</button>
+    <label>已观察手册 <select id="queue-manual" aria-label="计划手册"></select></label>
+    <label>有限观察轮次 <input id="queue-rounds" type="number" min="1" max="10" value="1"></label>
+    <div class="actions"><button id="queue-start" type="button">开始离线记录</button><button id="queue-pause" type="button">暂停</button><button id="queue-resume" type="button">继续</button><button id="queue-stop" type="button">停止</button></div>
+    <p id="queue-status" role="status">请先在原站正常打开章节列表。</p>
+    <div class="table-wrap"><table><thead><tr><th>手册/章节</th><th>总/单/多/判</th></tr></thead><tbody id="chapter-progress"></tbody></table></div>
+  </section>
   <p id="saved">尚未读取本地题库</p>
   <p id="storage-error" role="alert"></p>
   <div class="actions"><button id="export" type="button">导出 JSON</button><button id="import" type="button">导入 JSON</button><button id="refresh" type="button">刷新统计</button></div>

@@ -40,7 +40,7 @@
         if (errors.length < 30) errors.push({index,error:error.message});
       }
     }
-    return {state:{schema_version:1,questions,status:{...state.status,last_saved_at:new Date().toISOString(),last_error:rejected?`${rejected} 条记录无效，未保存`:null}},
+    return {state:{...state,schema_version:1,questions,status:{...state.status,last_saved_at:new Date().toISOString(),last_error:rejected?`${rejected} 条记录无效，未保存`:null}},
       result:{added,duplicates,rejected,errors,total:questions.length}};
   }
   function summary(state) {

@@ -31,6 +31,13 @@
   }
   window.addEventListener('message',event => {
     if (event.source !== window || event.origin !== 'https://aidhu.net' || !C.isAppDocument(location.href)) return;
+    if(event.data?.marker===C.QUEUE_MARKER) {
+      try {
+        const safe=C.queueMessage(event.data);
+        void chrome.runtime.sendMessage({kind:'platform_event',payload:safe}).catch(()=>{});
+      }catch{/* Never accept queue commands or arbitrary page metadata. */}
+      return;
+    }
     if (event.data?.marker===C.DIAG_MARKER) {
       try {
         const d=C.diagnostic(event.data);

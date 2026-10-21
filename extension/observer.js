@@ -21,18 +21,31 @@
       const method=init?.method ?? (typeof Request!=='undefined' && input instanceof Request?input.method:'GET');
       if(String(method).toUpperCase()!=='GET')return null;
       const url=typeof input==='string' || input instanceof URL?String(input):input instanceof Request?input.url:'';
+      const chapter=C.chapterEndpoint(url,location.href);if(chapter)return chapter;
       if(!C.isQuestionURL(url,location.href))return null;
       return C.endpoint(url,location.href) || {invalidContext:true};
     } catch {return null;}
   }
   function emit(meta,body) {
+    if([401,403,429].includes(body?.code) || ['401','403','429'].includes(body?.code))post({marker:C.QUEUE_MARKER,version:1,event:'blocked',status:Number(body.code)},'https://aidhu.net');
+    if(meta.kind==='chapters') {
+      if(!C.isAppDocument(location.href)||!body||body.code!==200||!C.object(body.data))return;
+      try {
+        const chapters=Object.entries(body.data).map(([chapter_id,name])=>({chapter_id,name}));
+        post(C.queueMessage({marker:C.QUEUE_MARKER,version:1,event:'chapters',manual_id:meta.manual_id,chapters}),'https://aidhu.net');
+      }catch{/* Only the documented chapter map shape is accepted. */}
+      return;
+    }
     if(!current())return;
     if(!body || body.code!==200 || !Array.isArray(body.data)) {diagnose('parse_error','shape');return;}
     if(body.data.length>10000) {diagnose('parse_error','size');return;}
-    if(!body.data.length) {diagnose('parse_error','empty');return;}
-    let batch=[],size=0,rejected=0;
+    if(!body.data.length) {
+      post({marker:C.QUEUE_MARKER,version:1,event:'empty',meta,capture:{response_id:crypto.randomUUID(),batch_index:0,batch_count:1,rejected_rows:0}},'https://aidhu.net');
+      diagnose('parse_error','empty');return;
+    }
+    let batch=[],size=0,rejected=0;const batches=[];
     const flush=()=>{
-      if(batch.length)post({marker:C.MARKER,version:1,meta,questions:batch},'https://aidhu.net');
+      if(batch.length)batches.push(batch);
       batch=[];size=0;
     };
     for(const row of body.data) {
@@ -44,6 +57,9 @@
       } catch {rejected++;}
     }
     flush();
+    const response_id=crypto.randomUUID();
+    batches.forEach((questions,batch_index)=>post({marker:C.MARKER,version:1,meta,questions,
+      capture:{response_id,batch_index,batch_count:batches.length,rejected_rows:rejected}},'https://aidhu.net'));
     if(rejected)diagnose('parse_error','row_schema',rejected);
   }
   async function readJSON(response) {
@@ -63,11 +79,12 @@
     } finally {reader.releaseLock();}
   }
   function responseAllowed(meta,status,finalURL) {
-    if(!current())return false;
-    diagnose('captured','response_pending');
+    if(meta.kind==='chapters'?!C.isAppDocument(location.href):!current())return false;
+    if([401,403,429].includes(status))post({marker:C.QUEUE_MARKER,version:1,event:'blocked',status},'https://aidhu.net');
+    if(meta.kind!=='chapters')diagnose('captured','response_pending');
     if(status<200 || status>=300){diagnose('parse_error','http_status');return false;}
     if(meta.invalidContext){diagnose('parse_error','endpoint_context');return false;}
-    const finalMeta=C.endpoint(finalURL,location.href);
+    const finalMeta=meta.kind==='chapters'?C.chapterEndpoint(finalURL,location.href):C.endpoint(finalURL,location.href);
     if(!finalMeta || C.stable(finalMeta)!==C.stable(meta)){diagnose('parse_error','redirect');return false;}
     return true;
   }

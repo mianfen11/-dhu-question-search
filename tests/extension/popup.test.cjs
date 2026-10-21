@@ -4,21 +4,24 @@ const {context,run}=require('./helpers.cjs');
 const tick=()=>new Promise(r=>setTimeout(r,10));
 function popup() {
   const elements={};
-  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail'])
-    elements[id]={textContent:'',disabled:false,value:'',files:[],listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},click(){this.listeners.click?.();}};
+  for(const id of ['total','one_choice','multi_choice','judge','conflicts','saved','storage-error','export','import','refresh','file','message','diagnostic-status','diagnostic-detail','queue-manual','queue-rounds','queue-start','queue-pause','queue-resume','queue-stop','queue-status','chapter-progress','auto-start'])
+    elements[id]={textContent:'',disabled:false,value:'',files:[],children:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},click(){this.listeners.click?.();}};
+  elements['queue-rounds'].value='1';elements['auto-start'].disabled=true;
+  const controls=[];
   let error=null, importJSON,download,diagnostic={status:'waiting',reason:'ready',captured:0,parsed:0,saved:0,rejected:0},missing=false;
   const stats={total:3,counts:{one_choice:1,multi_choice:1,judge:1},conflicts:0,last_saved_at:null,last_error:null};
   const bank={schema_version:1,questions:[],report:{}};
   const chrome={tabs:{query:async()=>[{id:7}],sendMessage:async()=>{if(missing)throw new Error('sensitive internal error');return {ok:true,diagnostic};}},runtime:{sendMessage:async message=>{
     if(error) return {ok:false,error};
+    if(message.kind==='queue_control'){controls.push(message);return {ok:true,stats};}
     if(message.kind==='export') return {ok:true,bank};
     if(message.kind==='import'){importJSON=message.json;return {ok:true,stats,result:{added:1,duplicates:2,rejected:0,errors:[]}};}
     return {ok:true,stats};
   }},storage:{onChanged:{addListener(){}}}};
-  const document={getElementById:id=>elements[id],body:{append(){}},createElement:()=>({click(){download={href:this.href,name:this.download};},remove(){}})};
+  const document={getElementById:id=>elements[id],body:{append(){}},createElement:()=>({children:[],value:'',append(...items){this.children.push(...items);},click(){download={href:this.href,name:this.download};},remove(){}})};
   const c=context({document,chrome,Blob,URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},setTimeout:()=>0,setInterval:()=>0});
   run(c,'popup.js');
-  return {elements,c,get imported(){return importJSON;},get download(){return download;},fail:e=>error=e,diagnose:d=>diagnostic=d,missing:()=>missing=true};
+  return {elements,c,get imported(){return importJSON;},get download(){return download;},stats,controls,fail:e=>error=e,diagnose:d=>diagnostic=d,missing:()=>missing=true};
 }
 test('popup displays total/type counts without rendering untrusted HTML',async()=>{
   const p=popup();await tick();
@@ -54,4 +57,17 @@ test('popup displays all five diagnostic outcomes and never renders untrusted re
   assert.equal(p.elements['diagnostic-detail'].textContent.includes('private-token'),false);
   p.missing();p.elements.refresh.click();await tick();
   assert.match(p.elements['diagnostic-detail'].textContent,/未找到扩展接收器/);
+});
+
+test('offline plan UI exposes statistics and controls while active automation stays disabled',async()=>{
+  const p=popup();await tick();
+  p.stats.queue={status:'tracking',catalogs:[{manual_id:'1',chapters:[{chapter_id:'1',name:'章节'}]}],manual_id:'1',
+    progress:{observed:1,total:6,added:2,duplicates:3,rejected:0},next:{chapter_id:'2',question_type:'judge',round:1},
+    chapters:[{manual_id:'1',chapter_id:'1',name:'<img onerror=bad>',total:2,counts:{one_choice:1,multi_choice:1,judge:0}}]};
+  p.elements.refresh.click();await tick();
+  assert.match(p.elements['queue-status'].textContent,/新增 2，重复 3/);
+  assert.equal(p.elements['queue-pause'].disabled,false);assert.equal(p.elements['auto-start'].disabled,true);
+  assert.equal(p.elements['chapter-progress'].children[0].children[0].innerHTML,undefined);
+  p.elements['queue-pause'].click();await tick();assert.equal(p.controls[0].action,'pause');
+  p.elements.export.click();await tick();assert.match(p.download.name,/\.json$/);
 });

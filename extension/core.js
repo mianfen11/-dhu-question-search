@@ -35,6 +35,40 @@
     try { const u=new URL(url,base); return u.origin==='https://api.aidhu.net' && !u.username && !u.password && !u.hash && TYPES.some(t=>u.pathname===PREFIX+t); }
     catch { return false; }
   }
+  const QUEUE_MARKER='dhu-question-bank/queue-v1';
+  function captureInfo(c) {
+    if(!object(c)||!['batch_count,batch_index,response_id','batch_count,batch_index,rejected_rows,response_id'].includes(Object.keys(c).sort().join(','))||typeof c.response_id!=='string'||
+      !/^[a-f0-9-]{36}$/.test(c.response_id)||!Number.isInteger(c.batch_count)||c.batch_count<1||c.batch_count>1000||
+      !Number.isInteger(c.batch_index)||c.batch_index<0||c.batch_index>=c.batch_count)throw new Error('响应批次标识无效');
+    if(c.rejected_rows!=null && (!Number.isInteger(c.rejected_rows)||c.rejected_rows<0||c.rejected_rows>10000))throw new Error('响应拒绝数无效');
+    return {response_id:c.response_id,batch_index:c.batch_index,batch_count:c.batch_count,rejected_rows:c.rejected_rows||0};
+  }
+  function chapterEndpoint(url,base) {
+    try {
+      const u=new URL(url,base),manual=u.searchParams.get('manual_id');
+      if(u.origin!=='https://api.aidhu.net'||u.username||u.password||u.hash||u.pathname!=='/api/protected/app/manual/chapters'||
+        u.searchParams.getAll('manual_id').length!==1||!/^[1-9]\d{0,15}$/.test(manual))return null;
+      return {kind:'chapters',manual_id:manual};
+    }catch{return null;}
+  }
+  function queueMessage(d) {
+    if(!object(d)||d.marker!==QUEUE_MARKER||d.version!==1)throw new Error('队列消息无效');
+    if(d.event==='blocked' && Object.keys(d).sort().join(',')==='event,marker,status,version' && [401,403,429].includes(d.status))
+      return {marker:QUEUE_MARKER,version:1,event:'blocked',status:d.status};
+    if(d.event==='empty' && Object.keys(d).sort().join(',')==='capture,event,marker,meta,version' && validMeta(d.meta)) {
+      const capture=captureInfo(d.capture);if(capture.batch_count!==1||capture.batch_index!==0||capture.rejected_rows)throw new Error('空响应标识无效');
+      return {marker:QUEUE_MARKER,version:1,event:'empty',meta:cleanMeta(d.meta),capture};
+    }
+    if(d.event!=='chapters'||Object.keys(d).sort().join(',')!=='chapters,event,manual_id,marker,version'||
+      typeof d.manual_id!=='string'||!/^[1-9]\d{0,15}$/.test(d.manual_id)||!Array.isArray(d.chapters)||!d.chapters.length||d.chapters.length>500)throw new Error('章节清单无效');
+    const seen=new Set();
+    const chapters=d.chapters.map(c=>{
+      if(!object(c)||Object.keys(c).sort().join(',')!=='chapter_id,name'||typeof c.chapter_id!=='string'||!/^[1-9]\d{0,15}$/.test(c.chapter_id)||
+        typeof c.name!=='string'||!c.name.trim()||c.name.length>200||seen.has(c.chapter_id))throw new Error('章节字段无效');
+      seen.add(c.chapter_id);return {chapter_id:c.chapter_id,name:c.name.normalize('NFC').trim()};
+    });
+    return {marker:QUEUE_MARKER,version:1,event:'chapters',manual_id:d.manual_id,chapters};
+  }
   function isPracticePage(href) {
     try {
       const u = new URL(href);
@@ -92,8 +126,9 @@
   function bridgeMessage(data, href) {
     if (!isPracticePage(href) || !object(data) || data.marker !== MARKER || data.version !== 1 || !validMeta(data.meta) ||
         !Array.isArray(data.questions) || !data.questions.length || data.questions.length > MAX_ROWS) throw new Error('消息无效');
-    if (Object.keys(data).sort().join(',') !== 'marker,meta,questions,version') throw new Error('消息包含未知字段');
+    if (!['marker,meta,questions,version','capture,marker,meta,questions,version'].includes(Object.keys(data).sort().join(','))) throw new Error('消息包含未知字段');
     const safe = {marker:MARKER, version:1, meta:cleanMeta(data.meta), questions:data.questions.map(q => filterRow(q,data.meta))};
+    if(own(data,'capture'))safe.capture=captureInfo(data.capture);
     if (JSON.stringify(safe).length > MAX_MESSAGE) throw new Error('消息过大');
     return safe;
   }
@@ -207,5 +242,5 @@
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable(content(q))));
     return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2,'0')).join('');
   }
-  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,HANDSHAKE_MARKER,MAIN_PHASES,handshake,DIAG_MARKER,DIAG_REASONS,diagnostic,isAppDocument,isQuestionURL,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
+  globalThis.DhuBankCore = Object.freeze({TYPES,MARKER,QUEUE_MARKER,captureInfo,chapterEndpoint,queueMessage,HANDSHAKE_MARKER,MAIN_PHASES,handshake,DIAG_MARKER,DIAG_REASONS,diagnostic,isAppDocument,isQuestionURL,MAX_ROWS,MAX_MESSAGE,object,own,first,isPracticePage,endpoint,validMeta,cleanMeta,filterRow,bridgeMessage,text,normalize,unpack,stable,content,fingerprint});
 })();

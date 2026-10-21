@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "东华手册题目收集器",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "minimum_chrome_version": "111",
   "description": "仅在正常练习时保存页面已加载的题目，离线导入与导出 JSON。",
   "permissions": [

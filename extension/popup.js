@@ -7,6 +7,27 @@ function showStats(stats) {
   $('conflicts').textContent=String(stats.conflicts);
   $('saved').textContent=stats.last_saved_at ? '最近保存：'+new Date(stats.last_saved_at).toLocaleString() : '尚未保存题目';
   $('storage-error').textContent=stats.last_error || '';
+  if(stats.queue)showQueue(stats.queue);
+}
+function showQueue(q) {
+  const labels={idle:'未建立计划',tracking:'离线记录中（不自动访问）',paused:'已暂停离线记录',stopped:'已停止，历史任务进度保留',round_finished:'计划轮次已观察完，题库完整性未验证'};
+  const manual=$('queue-manual'),selected=manual.value;
+  manual.replaceChildren();
+  for(const c of q.catalogs){const o=document.createElement('option');o.value=c.manual_id;o.textContent='手册 '+c.manual_id+'（'+c.chapters.length+' 章）';manual.append(o);}
+  manual.value=q.catalogs.some(c=>c.manual_id===selected)?selected:q.manual_id||q.catalogs[0]?.manual_id||'';
+  const active=['tracking','paused'].includes(q.status);
+  manual.disabled=active;$('queue-rounds').disabled=active;
+  $('queue-start').disabled=active||!q.catalogs.length;
+  $('queue-pause').disabled=q.status!=='tracking';$('queue-resume').disabled=q.status!=='paused';$('queue-stop').disabled=!active;
+  const p=q.progress;
+  const reason={user:'用户暂停/停止',http_401:'401，需用户检查正常登录',http_403:'403，需确认访问许可',http_429:'429，需确认平台频率限制',observation_limit:'已达到本计划有限观察上限'}[q.pause_reason]||'';
+  const type={one_choice:'单选',multi_choice:'多选',judge:'判断'};
+  $('queue-status').textContent=(labels[q.status]||'未知状态')+`。任务 ${p.observed}/${p.total}；新增 ${p.added}，重复 ${p.duplicates}，拒绝 ${p.rejected}。`+
+    (reason?reason+'。':'')+(q.next?`下一待观察：章节 ${q.next.chapter_id} ${type[q.next.question_type]}，第 ${q.next.round} 轮。`:'')+
+    (!q.catalogs.length?'请先在原站正常打开章节列表。':'');
+  const tbody=$('chapter-progress');tbody.replaceChildren();
+  for(const c of q.chapters){const tr=document.createElement('tr'),name=document.createElement('td'),counts=document.createElement('td');
+    name.textContent=`${c.manual_id||'?'} / ${c.chapter_id||'?'} ${c.name||''}`;counts.textContent=`${c.total} / ${c.counts.one_choice} / ${c.counts.multi_choice} / ${c.counts.judge}`;tr.append(name,counts);tbody.append(tr);}
 }
 async function send(message) {
   const response=await chrome.runtime.sendMessage(message);
@@ -79,3 +100,10 @@ void action(refresh);
 
 // Local status polling only; never fetches or replays a question request.
 setInterval(()=>{if(!busy)void diagnoseActiveTab();},1000);
+
+for(const [id,command] of [['queue-start','start'],['queue-pause','pause'],['queue-resume','resume'],['queue-stop','stop']]) {
+  $(id).addEventListener('click',()=>action(async()=>{
+    const response=await send({kind:'queue_control',action:command,manual_id:$('queue-manual').value,rounds:Number($('queue-rounds').value)});
+    showStats(response.stats);
+  }));
+}
