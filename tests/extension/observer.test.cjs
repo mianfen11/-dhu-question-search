@@ -77,3 +77,16 @@ test('bad rows skipped individually and large batches are safely split',async ()
   await h.window.fetch(url);await tick();
   assert.deepEqual(h.messages.map(m=>m.data.questions.length),[100,100,5]);
 });
+test('fetch started during SPA navigation is collected after practice hash becomes current',async () => {
+  const h=harness();h.location.href='https://aidhu.net/web/#/main/handbookList';
+  const response=h.window.fetch(url);
+  h.location.href=page;
+  assert.equal((await (await response).json()).data.length,1);
+  await tick();assert.equal(h.messages.length,1);
+});
+test('XHR opened before practice hash update is collected when its async response arrives',() => {
+  const h=harness();h.location.href='https://aidhu.net/web/#/main/handbookList';
+  const xhr=new h.XHR();xhr.open('GET',url);
+  h.location.href=page;xhr.complete({code:200,data:[row()]});
+  assert.equal(h.messages.length,1);
+});

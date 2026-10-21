@@ -14,7 +14,9 @@ async function handle(message,sender) {
   const isPopup=sender.url===popupURL;
   let rows;
   if (message.kind==='collect') {
-    if (!sender.tab || sender.frameId!==0 || !validSite(sender.url) || !validSite(sender.tab.url || sender.url) || (sender.tab.url && !C.isPracticePage(sender.tab.url)) || !C.isPracticePage(message.pageHref)) throw new Error('收集来源无效');
+    // sender.tab.url is tab metadata, not a reliable Vue hash-route clock.
+    // Authenticate the sending document; the isolated bridge validates its live href.
+    if (!sender.tab || sender.frameId!==0 || !validSite(sender.url) || !C.isPracticePage(message.pageHref)) throw new Error('收集来源无效');
     const safe=C.bridgeMessage(message.payload,message.pageHref);
     rows=safe.questions;
   } else if (!isPopup) throw new Error('仅弹窗可操作本地题库');

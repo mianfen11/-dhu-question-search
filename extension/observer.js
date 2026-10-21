@@ -11,7 +11,9 @@
     try {
       // Do not access init.headers, Request.headers, body, credentials or cookies.
       const method = init?.method ?? (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET');
-      if (!current() || String(method).toUpperCase() !== 'GET') return null;
+      // Vue can start the async load before committing the browser hash.
+      // Match only the exact endpoints here; require practice mode on response.
+      if (String(method).toUpperCase() !== 'GET') return null;
       const url = typeof input === 'string' || input instanceof URL ? String(input) : input instanceof Request ? input.url : '';
       return C.endpoint(url,location.href);
     } catch { return null; }
